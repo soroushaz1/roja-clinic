@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-release="1">
+<html lang="fa" dir="rtl" data-release="2">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -14,7 +14,7 @@
 <link rel="icon" href="favicon.svg">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/Estedad-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="clinic.css?v=1">
+<link rel="stylesheet" href="clinic.css?v=2">
 </head>
 <body>
 
@@ -88,7 +88,7 @@
       <div id="welcome">
         <div class="mirror-mark" aria-hidden="true"><i></i></div>
         <h2>نتیجهٔ تقریبی عمل را روی صورت بیمار ببینید</h2>
-        <p>بینی، لب، گونه، فک و چانه، چشم و ابرو و پوست: زنده، با مرز پیش و پس و اندازه‌ها. تصویر روی همین دستگاه پردازش می‌شود و جایی فرستاده یا ذخیره نمی‌شود.</p>
+        <p>بینی، لب، گونه، فک و چانه، چشم و ابرو و پوست: زنده و سه‌بعدی، از روبه‌رو تا نیم‌رخ، با مرز پیش و پس و اندازه‌ها. تصویر روی همین دستگاه پردازش می‌شود و جایی فرستاده یا ذخیره نمی‌شود.</p>
         <div class="welcome-actions">
           <button id="start" class="primary"><svg class="ico"><use href="#i-camera"/></svg>روشن‌کردن دوربین</button>
           <label class="ghost file-button" for="photo-input"><svg class="ico"><use href="#i-upload"/></svg>انتخاب عکس</label>
@@ -148,7 +148,7 @@
 
       <details id="measure-panel" open>
         <summary><svg class="ico"><use href="#i-ruler"/></svg>اندازه‌ها، پیش و پس از عمل</summary>
-        <p class="help">سهم از پهنای صورت یا نسبت دو اندازه، از روی همین تصویر. سر چرخیده یا کج همهٔ اعداد را جابه‌جا می‌کند؛ عمق و نیم‌رخ از نمای روبه‌رو اندازه‌گیری نمی‌شوند.</p>
+        <p class="help">سهم از پهنای صورت یا نسبت دو اندازه، روی مدل سه‌بعدی صورت؛ برای همین با چرخاندن سر کمتر عوض می‌شوند. عمق را مدل از روی تصویر یک دوربین تخمین می‌زند، پس اندازه‌های نیم‌رخ برای مقایسهٔ پیش و پس‌اند، نه میلی‌متر.</p>
         <div id="measure-table" class="measure"></div>
       </details>
 
@@ -226,6 +226,6 @@
 })();
 </script>
 <script nomodule>document.getElementById('status').textContent='این مرورگر قدیمی است و این برنامه را اجرا نمی‌کند. آخرین نسخهٔ Chrome را نصب کن.';</script>
-<script type="module" src="app.js?v=1"></script>
+<script type="module" src="app.js?v=2"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // The renderer's shaders, in GLSL ES 1.00, compiled by stage.js. They come from Roja's
-// makeup mirror: the clinic uses the grid mesh (MESH_VERT, OUT_FRAG), the face-space
-// masks and the `smooth` layer mode; the colour modes are there for when a treatment
-// needs one.
+// makeup mirror: the clinic uses the grid and the warp's face mesh (MESH_VERT,
+// WARP_VERT, OUT_FRAG), the face-space masks and the `smooth` layer mode; the colour
+// modes are there for when a treatment needs one.
 //
 // Plain template literals only: no interpolation, no backquotes inside. Fragment
 // shaders get PRECISION prepended by whoever compiles them.
@@ -18,6 +18,10 @@ precision mediump float;
 
 export const MESH_VERT=`attribute vec2 a_pos;attribute vec2 a_uv;varying vec2 v_uv;
 void main(){v_uv=a_uv;gl_Position=vec4(a_pos,0.,1.);}`;
+
+// The warp's face mesh: moved points, with depth so nearer triangles cover farther ones.
+export const WARP_VERT=`attribute vec3 a_pos;attribute vec2 a_uv;varying vec2 v_uv;
+void main(){v_uv=a_uv;gl_Position=vec4(a_pos,1.);}`;
 
 // A grade of (1,1,1) multiplies by exactly one, so the plain view stays exact.
 export const OUT_FRAG=`uniform sampler2D u_tex;uniform vec3 u_grade;varying vec2 v_uv;

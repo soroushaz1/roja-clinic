@@ -6,7 +6,7 @@
 // instead, and deform.js's textureLayers() names the zone each one smooths: the whole
 // face, the forehead, around the eyes, or under them. The WebGL stage (stage.js)
 // uploads each mask and smooths the frame inside it.
-import {blurInto} from './blur.js?v=1';
+import {blurInto} from './blur.js?v=2';
 
 // MediaPipe's contours. Eye openings and the mouth opening are never painted.
 const lipOuter=[61,185,40,39,37,0,267,269,270,409,291,375,321,405,314,17,84,181,91,146];
@@ -179,7 +179,8 @@ export function createSmoother({minCutoff=1.5,beta=20,dCutoff=1}={}){
       if(move>.1){prev=next;speed=0;return next;}
       speed+=gain(dCutoff,dt)*(move/dt-speed);
       const a=gain(minCutoff+beta*speed,dt);
-      prev=next.map((q,i)=>({...q,x:prev[i].x+(q.x-prev[i].x)*a,y:prev[i].y+(q.y-prev[i].y)*a}));
+      // Depth too: the edits are placed in 3D, so a jittery z would make them shimmer.
+      prev=next.map((q,i)=>({...q,x:prev[i].x+(q.x-prev[i].x)*a,y:prev[i].y+(q.y-prev[i].y)*a,z:(prev[i].z||0)+((q.z||0)-(prev[i].z||0))*a}));
       return prev;
     }
   };

@@ -1,5 +1,7 @@
 // Browser checks for Roja Clinic: every procedure changes the face and nothing else,
-// variants, the seam, the measurements, the debug overlay, snapshots and a photo.
+// variants, the seam, the measurements, the debug overlay, snapshots, a photo, and
+// edits in depth showing on a turned face (tools/face-turned.png, made by
+// tools/make-turned-face.cjs).
 //
 //   node tools/preview.cjs        # in one terminal
 //   node tools/clinic-check.cjs   # in another
@@ -70,7 +72,7 @@ const probe=({GX,GY})=>{
 };
 // Mean difference inside the box around some landmarks.
 const region=({ids,pad=2})=>{
-  const s=document.querySelector('#stage'),v=document.querySelector('#video');
+  const s=document.querySelector('#stage'),v=document.querySelector('#photo').hidden&&document.querySelector('#video').srcObject?document.querySelector('#video'):document.querySelector('#photo');
   const w=s.width,h=s.height,lm=window.testLandmarks;
   const read=source=>{const c=document.createElement('canvas');c.width=w;c.height=h;
     const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(source,0,0,w,h);return x.getImageData(0,0,w,h).data;};
@@ -287,6 +289,51 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     const photoBase=await page.evaluate(probe,{GX,GY});
     assert(photoBase.diff<1.5,`the photo differs from itself by ${photoBase.diff}`);
     report.photo='face found, procedure applied';
+
+    /* ---- a turned face: the edits in depth show, and stay on the face ---- */
+    await page.locator('#procedure-reset').click();
+    await page.evaluate(()=>{window.testLandmarks=null;});
+    await page.locator('#photo-input').setInputFiles(path.join(__dirname,'face-turned.png'));
+    await page.waitForFunction(()=>window.testLandmarks&&/یک عمل را/.test(document.querySelector('#status').textContent),null,{timeout:30000});
+    await settle(page);
+    const turned=await page.evaluate(probe,{GX,GY});
+    assert(turned.diff<1.5,`the turned photo differs from itself by ${turned.diff}`);
+    const [poseFile]=await Promise.all([page.waitForEvent('download'),page.locator('#debug-export').click()]);
+    const yaw=JSON.parse(fs.readFileSync(await poseFile.path(),'utf8')).pose.yaw;
+    assert(Math.abs(yaw)>20,`the turned photo reads as only ${yaw.toFixed(1)}° turned`);
+    await page.locator('#compare').click();                  // the whole result, no seam
+    const CHIN=[17,200,199,175,152,148,377],NOSE=[168,6,197,195,5,4,1];
+    const depthEdit=async(id,ids)=>{
+      await setSlider(page,`#fine-${id}`,100);await page.waitForTimeout(150);await settle(page);
+      const d=(await page.evaluate(region,{ids,pad:8})).diff;
+      // Nothing changes away from the face.
+      const away=await page.evaluate(()=>{
+        const s=document.querySelector('#stage'),v=document.querySelector('#photo'),w=s.width,h=s.height,lm=window.testLandmarks;
+        const read=src=>{const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(src,0,0,w,h);return x.getImageData(0,0,w,h).data;};
+        const sd=read(s),vd=read(v),xs=lm.map(l=>l.x*w),ys=lm.map(l=>l.y*h);
+        const face=Math.hypot((lm[454].x-lm[234].x)*w,(lm[454].y-lm[234].y)*h),m=face*.35;
+        const x0=Math.min(...xs)-m,x1=Math.max(...xs)+m,y0=Math.min(...ys)-m,y1=Math.max(...ys)+m;
+        let n=0;for(let y=0;y<h;y++)for(let x=0;x<w;x++){if(x>=x0&&x<=x1&&y>=y0&&y<=y1)continue;
+          const i=(y*w+x)*4;if(Math.abs(sd[i]-vd[i])+Math.abs(sd[i+1]-vd[i+1])+Math.abs(sd[i+2]-vd[i+2])>6)n++;}
+        return n;
+      });
+      assert.equal(away,0,`${id} changed ${away} pixels away from the face`);
+      await setSlider(page,`#fine-${id}`,0);
+      return d;
+    };
+    const chinTurned=await depthEdit('chin-projection',CHIN),humpTurned=await depthEdit('nose-hump',NOSE);
+    assert(chinTurned>2,`bringing the chin forward barely shows on a turned face (${chinTurned.toFixed(2)})`);
+    assert(humpTurned>1,`a bigger hump barely shows on a turned face (${humpTurned.toFixed(2)})`);
+    // The measurements see it too.
+    await setSlider(page,'#fine-chin-projection',100);await page.waitForTimeout(400);
+    const chinRow=await page.evaluate(()=>{
+      const cells=[...document.querySelectorAll('#measure-table span')],i=cells.findIndex(c=>c.textContent==='جلوآمدگی چانه نسبت به لب پایین');
+      return i<0?null:{changed:cells[i].classList.contains('changed'),up:cells[i+3].classList.contains('up')};
+    });
+    assert(chinRow&&chinRow.changed&&chinRow.up,'the chin measurement did not register the chin coming forward');
+    await page.locator('#procedure-reset').click();
+    await page.locator('#compare').click();
+    report.turned={yaw:+yaw.toFixed(1),chin:+chinTurned.toFixed(2),hump:+humpTurned.toFixed(2)};
 
     // A link straight to a procedure.
     await page.goto(origin+'/#procedure=lip-filler',{waitUntil:'domcontentloaded'});
