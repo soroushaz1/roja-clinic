@@ -1,7 +1,7 @@
 // Browser checks for Roja Clinic: every procedure changes the face and nothing else,
 // variants, the seam, the measurements, the debug overlay, snapshots, a photo, and
 // edits in depth showing on a turned face (tools/face-turned.png, made by
-// tools/make-turned-face.cjs).
+// tools/make-turned-face.cjs), and the patient record with its PDF report and backup.
 //
 //   node tools/preview.cjs        # in one terminal
 //   node tools/clinic-check.cjs   # in another
@@ -344,6 +344,88 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.setViewportSize({width:390,height:844});
     await settle(page);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'horizontal scroll at 390px');
+
+    /* ---- the patient record, the report, a backup ---- */
+    {
+      const ctx=await browser.newContext({viewport:{width:1440,height:960},acceptDownloads:true});
+      const rp=await ctx.newPage(),rerrors=[];
+      rp.on('pageerror',e=>rerrors.push(e.message));rp.on('dialog',d=>d.accept());
+      await rp.addInitScript(fakeCamera,{data:fixture});
+      await rp.goto(origin,{waitUntil:'domcontentloaded'});
+      const toastSays=text=>rp.waitForFunction(t=>document.querySelector('#toast').textContent.includes(t),text,{timeout:20000});
+      const shotCount=n=>rp.waitForFunction(n=>document.querySelectorAll('#record-shots .shot').length===n,n,{timeout:20000});
+      await rp.locator('#patient-open').click();
+      assert.equal(await rp.locator('#patients').isVisible(),true,'the patient list did not open');
+      assert.match(await rp.locator('#patient-list').textContent(),/هنوز بیماری ثبت نشده/,'a fresh record is not empty');
+      await rp.locator('#clinic-settings summary').click();
+      await rp.locator('#clinic-name').fill('کلینیک نمونه');await rp.locator('#doctor-name').fill('دکتر نمونه');
+      await rp.locator('#patient-new').click();
+      await rp.locator('#pf-name').fill('بیمار آزمایشی');await rp.locator('#pf-code').fill('T-1');
+      await rp.locator('#pf-age').fill('34');await rp.locator('#pf-sex').selectOption('f');
+      await rp.locator('#patient-form button[type=submit]').click();
+      await rp.waitForSelector('#record[open]');
+      assert.equal(await rp.locator('#patient-name').textContent(),'بیمار آزمایشی','the open patient is not named in the header');
+      await rp.locator('#record-close').click();
+      // Snapshots go into today's visit, before and after.
+      await rp.locator('#start').click();
+      await rp.waitForFunction(()=>!document.querySelector('#stage').hidden&&/یک عمل را/.test(document.querySelector('#status').textContent),null,{timeout:90000});
+      await rp.locator('[data-procedure="rhinoplasty"]').click();await setSlider(rp,'#strength',90);
+      await rp.locator('#snap').click();await toastSays('در پروندهٔ');
+      await rp.locator('#combine-procedures').check();
+      await rp.locator('[data-procedure="chin-implant"]').click();
+      await rp.evaluate(()=>{document.querySelector('#toast').textContent='';});
+      await rp.locator('#snap').click();await toastSays('در پروندهٔ');
+      await rp.locator('#patient-open').click();await shotCount(2);
+      await rp.locator('#record-note').fill('یادداشت آزمایشی پزشک');
+      // The report: a real PDF, one page or more per pair, named for the file code.
+      const pdf=async()=>{
+        const [d]=await Promise.all([rp.waitForEvent('download',{timeout:60000}),rp.locator('#record-pdf').click()]);
+        const bytes=fs.readFileSync(await d.path());
+        return {name:d.suggestedFilename(),bytes,pages:(bytes.toString('latin1').match(/\/Type \/Page\b(?!s)/g)||[]).length};
+      };
+      const both=await pdf();
+      assert.match(both.name,/^report-T-1-\d{4}-\d\d-\d\d\.pdf$/,`the report is named ${both.name}`);
+      assert.equal(both.bytes.subarray(0,5).toString(),'%PDF-','the report is not a PDF');
+      assert(both.bytes.toString('latin1').includes('/DCTDecode')&&both.bytes.toString('latin1').trimEnd().endsWith('%%EOF'),'the PDF is not whole');
+      assert(both.pages>=2,`a report of two pairs has ${both.pages} page`);
+      try{
+        const file=path.join(require('os').tmpdir(),'clinic-check-report.pdf');fs.writeFileSync(file,both.bytes);
+        const info=require('child_process').execSync(`pdfinfo "${file}"`,{stdio:['ignore','pipe','ignore']}).toString();
+        assert.match(info,new RegExp(`Pages:\\s+${both.pages}\\b`),'pdfinfo reads another page count');
+        report.pdfinfo='valid';
+      }catch(e){if(e instanceof assert.AssertionError)throw e;report.pdfinfo='not installed';}
+      // Left out of the report, a shot leaves it shorter.
+      await rp.locator('#record-shots .shot').nth(1).locator('input[type=checkbox]').uncheck();
+      await rp.waitForTimeout(200);
+      const one=await pdf();
+      assert(one.pages<both.pages,`leaving a shot out did not shorten the report (${one.pages} vs ${both.pages})`);
+      // It is all still there after a reload.
+      await rp.reload({waitUntil:'domcontentloaded'});
+      await rp.waitForFunction(()=>document.querySelector('#patient-name').textContent==='بیمار آزمایشی',null,{timeout:10000});
+      await rp.locator('#patient-open').click();await shotCount(2);
+      assert.equal(await rp.locator('#record-note').inputValue(),'یادداشت آزمایشی پزشک','the note was not kept');
+      // A backup, a deletion, and the backup back.
+      await rp.locator('#record-switch').click();
+      await rp.locator('#clinic-settings summary').click();
+      const [b]=await Promise.all([rp.waitForEvent('download'),rp.locator('#backup-save').click()]);
+      const backupFile=await b.path(),data=JSON.parse(fs.readFileSync(backupFile,'utf8'));
+      assert.equal(data.patients.length,1,'the backup does not hold the patient');
+      assert.equal(data.shots.length,2,'the backup does not hold both shots');
+      assert(data.shots.every(s=>/^data:image\/jpeg/.test(s.before)&&/^data:image\/jpeg/.test(s.after)),'the backup does not hold the pictures');
+      await rp.locator('#patients-close').click();
+      await rp.locator('#patient-open').click();await rp.waitForSelector('#record[open]');
+      await rp.locator('#record-delete').click();
+      await rp.waitForFunction(()=>document.querySelector('#patient-name').textContent==='بیمار',null,{timeout:10000});
+      await rp.locator('#patient-open').click();
+      await rp.waitForFunction(()=>/هنوز بیماری ثبت نشده/.test(document.querySelector('#patient-list').textContent),null,{timeout:10000});
+      await rp.locator('#backup-load').setInputFiles({name:'backup.json',mimeType:'application/json',buffer:fs.readFileSync(backupFile)});
+      await rp.waitForSelector('#patient-list [data-patient]',{timeout:10000});
+      await rp.locator('#patient-list [data-patient]').first().click();
+      await shotCount(2);
+      assert.deepEqual(rerrors,[],'page errors in the record');
+      report.record={pdfPages:both.pages,oneShot:one.pages,backupShots:data.shots.length};
+      await ctx.close();
+    }
 
     report.errors=errors;
     assert.deepEqual(errors,[],'page errors');

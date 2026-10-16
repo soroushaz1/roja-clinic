@@ -1,18 +1,19 @@
-import {createStage,layerModes} from './stage.js?v=2';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=2';
-import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=2';
-import {renderDebug,nearest} from './debug.js?v=2';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=2';
-import {createWarp,MESH} from './warp.js?v=2';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=2';
-import {createMaskPainter,createSmoother} from './masks.js?v=2';
+import {createStage,layerModes} from './stage.js?v=3';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=3';
+import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=3';
+import {renderDebug,nearest} from './debug.js?v=3';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=3';
+import {createWarp,MESH} from './warp.js?v=3';
+import {createRecords} from './records.js?v=3';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=3';
+import {createMaskPainter,createSmoother} from './masks.js?v=3';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='2';
+const RELEASE='3';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -304,11 +305,14 @@ function paintMaskView(p){
 function probes(){
   return [50,280,151,199].flatMap(i=>[landmarks[i].x,landmarks[i].y]).map(v=>Math.min(.99,Math.max(.01,v)));
 }
+// For one draw: the plain picture, no treatment and no warp (the "before" a snapshot
+// keeps for the patient record).
+let plainOnce=false;
 function draw(now=performance.now()){
   if(!source){octx.clearRect(0,0,overlay.width,overlay.height);return;}
   const {w,h}=frameSize();
   if(overlay.width!==w||overlay.height!==h){overlay.width=w;overlay.height=h;}
-  const p=plan();
+  const p=plainOnce?{textures:[],amounts:procedureAmounts(),before:false}:plan();
   const gl=ensureStage();
   // The warp follows the face, so it is worked out again for every frame drawn.
   const warp=gl&&landmarks&&p.before?warper.compute(landmarks,w,h,p.amounts):null;
@@ -553,7 +557,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=2${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=3${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -573,7 +577,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=2');
+    await import('./face-core.js?v=3');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -840,6 +844,47 @@ function capture(){
   x.fillText('شبیه‌سازی تصویری، نه نتیجهٔ قطعی',w-12*s,10*s);
   return c;
 }
+// The stage as seen (mirrored), with no seam: `plain` for the picture before.
+function stagePicture(plain){
+  const keep=seamOn;seamOn=false;plainOnce=plain;
+  try{draw();}finally{plainOnce=false;seamOn=keep;}
+  const {w,h}=frameSize(),c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d');x.translate(w,0);x.scale(-1,1);x.drawImage($('stage'),0,0,w,h);
+  return c;
+}
+// The face's box in the mirrored picture, widened and made 3:4, as fractions.
+function faceBox(){
+  const {w,h}=frameSize();
+  let x0=1,x1=0,y0=1,y1=0;
+  for(const l of landmarks){x0=Math.min(x0,1-l.x);x1=Math.max(x1,1-l.x);y0=Math.min(y0,l.y);y1=Math.max(y1,l.y);}
+  const cx=(x0+x1)/2*w,cy=(y0+y1)/2*h;
+  let bh=(y1-y0)*h*1.5,bw=bh*3/4;
+  bw=Math.max(bw,(x1-x0)*w*1.4);bh=bw*4/3;
+  const fit=Math.min(1,w/bw,h/bh);bw*=fit;bh*=fit;
+  const bx=Math.min(w-bw,Math.max(0,cx-bw/2)),by=Math.min(h-bh,Math.max(0,cy-bh/2));
+  return {x:bx/w,y:by/h,w:bw/w,h:bh/h};
+}
+const jpeg=c=>new Promise(resolve=>c.toBlob(resolve,'image/jpeg',.9));
+// Into the open patient's record: before and after, what was applied, and the
+// measurements, at this moment.
+async function recordShot(label){
+  if(!records.patient)return;
+  if(!stage||!landmarks){toast('برای پرونده، صورت باید روی تصویر دیده شود.');return;}
+  const {w,h}=frameSize(),amounts=procedureAmounts();
+  const P=points3(landmarks,w,h);
+  const shot={label,box:faceBox(),yaw:poseAngles?.yaw??null,
+    plan:{active:[...active].filter(([,v])=>v>0),variants:Object.fromEntries(variants),
+      overrides:Object.fromEntries(Object.entries(overrides).filter(([,v])=>v))},
+    measures:{before:measure(P),after:measure(moved(P,anyProcedure()?displacements(P,amounts):null))}};
+  const before=stagePicture(true),after=stagePicture(false);
+  draw();
+  const [b,a]=await Promise.all([jpeg(before),jpeg(after)]);
+  if(!b||!a){toast('ذخیره در پرونده روی این مرورگر ممکن نشد.');return;}
+  try{
+    await records.addShot({...shot,before:b,after:a});
+    toast(`در پروندهٔ «${records.patient.name||records.patient.code}» ذخیره شد.`);
+  }catch(e){toast('ذخیره در پرونده ممکن نشد: '+(e?.message||e));}
+}
 async function snapshot(){
   const c=capture();
   if(!c){if(source)toast('عکس گرفته نشد. دوباره امتحان کن.');return;}
@@ -853,7 +898,8 @@ async function snapshot(){
   while(shots.length>24){URL.revokeObjectURL(shots.pop().url);}
   $('shots-count').textContent=fa.format(shots.length);
   $('flash').classList.remove('on');void $('flash').offsetWidth;$('flash').classList.add('on');
-  toast('عکس گرفته شد. از «عکس‌ها» می‌توانی مقایسه یا ذخیره‌اش کنی.');
+  if(records.patient)await recordShot(label);
+  else toast('عکس گرفته شد. از «عکس‌ها» می‌توانی مقایسه یا ذخیره‌اش کنی. برای نگه‌داشتن در پروندهٔ بیمار، اول بیمار را انتخاب کن.');
 }
 function renderGallery(){
   const list=$('gallery-shots');
@@ -881,7 +927,9 @@ function renderGallery(){
 }
 function saveBlob(blob,name){
   const url=URL.createObjectURL(blob);
-  const a=el('a',{href:url,download:name});document.body.append(a);a.click();a.remove();
+  // Inside an open dialog if there is one: outside it the page is inert, and the
+  // link would lose its file name.
+  const a=el('a',{href:url,download:name});(document.querySelector('dialog[open]')||document.body).append(a);a.click();a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function icon(id){
@@ -916,6 +964,9 @@ $('theme').onclick=()=>{
 };
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',paintThemeButton);
 paintThemeButton();
+
+/* ---------- the patient record ------------------------------------------ */
+const records=createRecords({$,el,toast,fa,icon,saveBlob});
 
 /* ---------- wiring ------------------------------------------------------ */
 $('gallery-open').onclick=()=>{renderGallery();$('gallery').showModal();};

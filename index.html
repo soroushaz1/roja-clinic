@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-release="2">
+<html lang="fa" dir="rtl" data-release="3">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -14,7 +14,7 @@
 <link rel="icon" href="favicon.svg">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/Estedad-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="clinic.css?v=2">
+<link rel="stylesheet" href="clinic.css?v=3">
 </head>
 <body>
 
@@ -32,6 +32,7 @@
   <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M4 20h16"/></symbol>
   <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M3.5 15.5l12-12 5 5-12 12z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.8"/><path d="M4.5 20c.8-3.8 3.8-6 7.5-6s6.7 2.2 7.5 6"/></symbol>
   <symbol id="i-bug" viewBox="0 0 24 24"><rect x="7" y="7.5" width="10" height="12" rx="5"/><path d="M9.5 7.5a2.5 2.5 0 0 1 5 0M12 12v7.5M3.5 13H7M17 13h3.5M4.5 8.5L7.5 10M19.5 8.5L16.5 10M4.5 18.5l3-1.5M19.5 18.5l-3-1.5"/></symbol>
 </svg>
 
@@ -39,6 +40,9 @@
   <a class="brand" href="./" aria-label="رُژا کلینیک، بارگذاری دوبارهٔ صفحه"><i aria-hidden="true"></i>رُژا <span>کلینیک · نسخهٔ آزمایشی</span></a>
   <div class="top-actions">
     <button id="theme" class="icon-btn" type="button" aria-label="روشن یا تیره"><svg class="ico"><use href="#i-moon"/></svg></button>
+    <button id="patient-open" class="pill patient-pill" aria-pressed="false" aria-label="پروندهٔ بیمار">
+      <svg class="ico"><use href="#i-user"/></svg><span class="label" id="patient-name">بیمار</span>
+    </button>
     <button id="gallery-open" class="ghost pill" aria-label="عکس‌های گرفته‌شده">
       <svg class="ico"><use href="#i-images"/></svg><span class="label">عکس‌ها</span> <span class="count" id="shots-count">۰</span>
     </button>
@@ -215,6 +219,69 @@
   <div class="shots" id="gallery-shots"></div>
 </dialog>
 
+<!-- The patient record (records.js): kept on this device only. -->
+<dialog id="patients" aria-labelledby="patients-title">
+  <div class="dialog-head">
+    <h2 id="patients-title">بیماران</h2>
+    <button id="patients-close" class="ghost" type="button">بستن</button>
+  </div>
+  <p class="quiet">پرونده‌ها فقط روی همین دستگاه، در حافظهٔ این مرورگر، نگه داشته می‌شوند و جایی فرستاده نمی‌شوند.</p>
+  <div class="patient-tools">
+    <input id="patient-search" type="search" placeholder="جست‌وجوی نام یا کد پرونده" aria-label="جست‌وجوی بیمار" autocomplete="off">
+    <button id="patient-new" class="primary" type="button">بیمار تازه</button>
+  </div>
+  <form id="patient-form" class="patient-form" hidden>
+    <h3 id="pf-title">بیمار تازه</h3>
+    <label>نام<input id="pf-name" type="text" maxlength="60" autocomplete="off"></label>
+    <label>کد پرونده<input id="pf-code" type="text" maxlength="30" autocomplete="off" dir="ltr"></label>
+    <div class="pf-pair">
+      <label>سن<input id="pf-age" type="number" min="1" max="120" inputmode="numeric"></label>
+      <label>جنس<select id="pf-sex"><option value="">—</option><option value="f">زن</option><option value="m">مرد</option></select></label>
+    </div>
+    <label>یادداشت<textarea id="pf-notes" rows="2" maxlength="500"></textarea></label>
+    <div class="row-actions">
+      <button class="primary" type="submit">ذخیره</button>
+      <button class="ghost" type="button" id="pf-cancel">انصراف</button>
+    </div>
+  </form>
+  <div class="patient-list" id="patient-list"></div>
+  <details id="clinic-settings">
+    <summary>مطب و پشتیبان‌گیری</summary>
+    <label class="patient-form-row">نام مطب یا کلینیک<input id="clinic-name" type="text" maxlength="60" autocomplete="off"></label>
+    <label class="patient-form-row">نام پزشک<input id="doctor-name" type="text" maxlength="60" autocomplete="off"></label>
+    <p class="help">در سربرگ گزارش PDF می‌آیند.</p>
+    <div class="row-actions">
+      <button id="backup-save" class="ghost" type="button"><svg class="ico"><use href="#i-download"/></svg>پشتیبان‌گیری</button>
+      <label class="ghost file-button" for="backup-load"><svg class="ico"><use href="#i-upload"/></svg>بازگرداندن پشتیبان</label>
+      <input id="backup-load" type="file" accept="application/json,.json" hidden>
+    </div>
+    <p class="help">فایل پشتیبان همهٔ بیماران و عکس‌هایشان را دارد؛ آن را جای امن نگه دار.</p>
+  </details>
+</dialog>
+
+<dialog id="record" aria-labelledby="record-title">
+  <div class="dialog-head">
+    <h2 id="record-title"></h2>
+    <button id="record-close" class="ghost" type="button">بستن</button>
+  </div>
+  <p class="quiet" id="record-meta"></p>
+  <div class="row-actions">
+    <button id="record-edit" class="ghost" type="button">ویرایش</button>
+    <button id="record-switch" class="ghost" type="button">بیمار دیگر</button>
+    <button id="record-end" class="ghost" type="button">بستن پرونده</button>
+    <button id="record-delete" class="ghost danger" type="button">حذف بیمار</button>
+  </div>
+  <label class="field-label" for="record-visit">جلسه</label>
+  <select id="record-visit"></select>
+  <p class="help">عکس‌هایی که در جلسه با «عکس» گرفته می‌شوند، با تصویر پیش و پس، اینجا می‌آیند. هر عکسی که تیک دارد در گزارش می‌آید.</p>
+  <div class="shots record-shots" id="record-shots"></div>
+  <label class="field-label" for="record-note">یادداشت پزشک برای این جلسه</label>
+  <textarea id="record-note" rows="3" maxlength="2000" placeholder="در گزارش می‌آید"></textarea>
+  <div class="row-actions">
+    <button id="record-pdf" class="primary" type="button" disabled><svg class="ico"><use href="#i-download"/></svg>دانلود گزارش PDF</button>
+  </div>
+</dialog>
+
 <div id="toast" role="status" aria-live="polite"></div>
 
 <!-- If the app cannot start in this browser, say so instead of leaving a dead page. -->
@@ -226,6 +293,6 @@
 })();
 </script>
 <script nomodule>document.getElementById('status').textContent='این مرورگر قدیمی است و این برنامه را اجرا نمی‌کند. آخرین نسخهٔ Chrome را نصب کن.';</script>
-<script type="module" src="app.js?v=2"></script>
+<script type="module" src="app.js?v=3"></script>
 </body>
 </html>

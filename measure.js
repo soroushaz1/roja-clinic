@@ -10,7 +10,7 @@
 // Depth comes from one camera: the model infers it from the picture, it does not
 // measure it. Read the profile measurements (`abs`) as a comparison of before and
 // after on one face, not as millimetres.
-import {headFrame} from './deform.js?v=2';
+import {headFrame} from './deform.js?v=3';
 
 export const metrics=[
   {id:'nose-width', name:'پهنای پرهٔ بینی', span:[64,294]},
