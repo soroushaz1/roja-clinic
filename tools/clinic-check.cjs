@@ -1,7 +1,8 @@
 // Browser checks for Roja Clinic: every procedure changes the face and nothing else,
 // variants, the seam, the measurements, the debug overlay, snapshots, a photo, and
 // edits in depth showing on a turned face (tools/face-turned.png, made by
-// tools/make-turned-face.cjs), and the patient record with its PDF report and backup.
+// tools/make-turned-face.cjs), the patient record with its PDF report and backup, and
+// the patient's screen.
 //
 //   node tools/preview.cjs        # in one terminal
 //   node tools/clinic-check.cjs   # in another
@@ -424,6 +425,57 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
       await shotCount(2);
       assert.deepEqual(rerrors,[],'page errors in the record');
       report.record={pdfPages:both.pages,oneShot:one.pages,backupShots:data.shots.length};
+      await ctx.close();
+    }
+
+    /* ---- the patient's screen ---- */
+    {
+      const ctx=await browser.newContext({viewport:{width:1440,height:900}});
+      const dp=await ctx.newPage(),perrors=[];
+      dp.on('pageerror',e=>perrors.push('doctor: '+e.message));
+      await dp.addInitScript(fakeCamera,{data:fixture});
+      await dp.goto(origin,{waitUntil:'domcontentloaded'});
+      const [pop]=await Promise.all([dp.waitForEvent('popup'),dp.locator('#present-open').click()]);
+      pop.on('pageerror',e=>perrors.push('patient: '+e.message));
+      await pop.waitForLoadState();await pop.setViewportSize({width:1280,height:720});
+      await pop.waitForFunction(()=>window.rojaPresent,null,{timeout:10000});
+      assert.equal(await pop.locator('#idle').isVisible(),true,'the patient screen does not wait quietly before the camera');
+      assert.equal(await dp.locator('#present-open').getAttribute('aria-pressed'),'true','the button does not show the screen is open');
+      await dp.locator('#start').click();
+      await dp.waitForFunction(()=>!document.querySelector('#stage').hidden&&/یک عمل را/.test(document.querySelector('#status').textContent),null,{timeout:90000});
+      await pop.waitForFunction(()=>{const v=document.querySelector('#view');return !v.hidden&&v.videoWidth>0;},null,{timeout:20000});
+      await dp.locator('[data-procedure="rhinoplasty"]').click();await setSlider(dp,'#strength',100);
+      await pop.waitForFunction(()=>document.querySelector('#caption').textContent.includes('جراحی بینی'),null,{timeout:5000});
+      await pop.waitForTimeout(500);
+      // The same picture as the doctor's (small differences from the video encoding).
+      const small=(page,sel)=>page.evaluate(sel=>{const e=document.querySelector(sel),c=document.createElement('canvas');c.width=160;c.height=120;
+        const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(e,0,0,160,120);return Array.from(x.getImageData(0,0,160,120).data);},sel);
+      const a=await small(dp,'#stage'),v=await small(pop,'#view');
+      let diff=0;for(let i=0;i<a.length;i+=4)diff+=Math.abs(a[i]-v[i])+Math.abs(a[i+1]-v[i+1])+Math.abs(a[i+2]-v[i+2]);
+      diff/=a.length/4*3;
+      assert(diff<4,`the patient screen differs from the doctor's by ${diff.toFixed(2)}`);
+      // The seam follows the doctor's.
+      assert.equal(await pop.locator('#seam').isVisible(),true,'no seam on the patient screen');
+      const seamAt=()=>pop.evaluate(()=>parseFloat(document.querySelector('#seam-line').style.left));
+      const before=await seamAt();
+      await dp.evaluate(()=>{const box=document.querySelector('#viewport').getBoundingClientRect(),s=document.querySelector('#stage');
+        const ratio=s.width/s.height;let bw=box.width,bh=box.width/ratio;if(bh>box.height){bh=box.height;bw=box.height*ratio;}
+        document.querySelector('#seam').dispatchEvent(new PointerEvent('pointerdown',{clientX:box.left+(box.width-bw)/2+bw*.25,clientY:box.top+box.height/2,bubbles:true,pointerId:1}));});
+      await pop.waitForFunction(b=>Math.abs(parseFloat(document.querySelector('#seam-line').style.left)-b)>50,before,{timeout:5000});
+      await dp.locator('#compare').click();
+      await pop.waitForFunction(()=>document.querySelector('#seam').hidden,null,{timeout:5000});
+      // Stopping the camera leaves no frozen picture behind.
+      await dp.locator('#stop').click();
+      await pop.waitForFunction(()=>!document.querySelector('#idle').hidden,null,{timeout:10000});
+      // P closes it and opens it again.
+      await dp.keyboard.press('p');
+      await pop.waitForEvent('close',{timeout:5000}).catch(()=>{});
+      assert.equal(pop.isClosed(),true,'P did not close the patient screen');
+      assert.equal(await dp.locator('#present-open').getAttribute('aria-pressed'),'false','the button still shows the screen open');
+      const [again]=await Promise.all([dp.waitForEvent('popup'),dp.keyboard.press('p')]);
+      await again.waitForLoadState();
+      assert.deepEqual(perrors,[],'page errors around the patient screen');
+      report.patientScreen={diff:+diff.toFixed(2)};
       await ctx.close();
     }
 

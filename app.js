@@ -1,19 +1,20 @@
-import {createStage,layerModes} from './stage.js?v=3';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=3';
-import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=3';
-import {renderDebug,nearest} from './debug.js?v=3';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=3';
-import {createWarp,MESH} from './warp.js?v=3';
-import {createRecords} from './records.js?v=3';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=3';
-import {createMaskPainter,createSmoother} from './masks.js?v=3';
+import {createStage,layerModes} from './stage.js?v=4';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=4';
+import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=4';
+import {renderDebug,nearest} from './debug.js?v=4';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=4';
+import {createWarp,MESH} from './warp.js?v=4';
+import {createRecords} from './records.js?v=4';
+import {createPresenter} from './presenter.js?v=4';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=4';
+import {createMaskPainter,createSmoother} from './masks.js?v=4';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='3';
+const RELEASE='4';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -557,7 +558,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=3${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=4${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -577,7 +578,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=3');
+    await import('./face-core.js?v=4');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -968,6 +969,32 @@ paintThemeButton();
 /* ---------- the patient record ------------------------------------------ */
 const records=createRecords({$,el,toast,fa,icon,saveBlob});
 
+/* ---------- the patient's screen ---------------------------------------- */
+// A second window for the patient's monitor (presenter.js, present.html): the stage
+// itself as a stream, and the seam and the procedure in words.
+const presenter=createPresenter({toast,onAttach:()=>invalidate()});
+let clinicName='',clinicRead=0;
+function presentState(){
+  const now=performance.now();
+  if(now-clinicRead>1000){clinicRead=now;try{clinicName=JSON.parse(localStorage.getItem('clinic-settings'))?.clinic||'';}catch{}}
+  const live=!!source&&!!stage&&!$('stage').hidden,{w,h}=frameSize();
+  const named=[...active].filter(([,v])=>v>0).map(([id])=>{
+    const p=byId(id),{variant}=resolve(p,variants.get(id));
+    return `${p.name}${variant?` · ${variant.name}`:''}`;
+  });
+  return {live,aspect:w/h,seam:live&&seamOn?seam:null,labels:seamLabels(),clinic:clinicName,
+    caption:named.join('، ')||(anyProcedure()?'تنظیم دستی':''),
+    message:source&&!live?'پیش‌نمایش روی این مرورگر ساخته نمی‌شود.':''};
+}
+function presentLoop(){
+  presenter.tick(source&&stage&&!$('stage').hidden?$('stage'):null,presentState());
+  const on=String(presenter.open);
+  if($('present-open').getAttribute('aria-pressed')!==on)$('present-open').setAttribute('aria-pressed',on);
+  requestAnimationFrame(presentLoop);
+}
+requestAnimationFrame(presentLoop);
+$('present-open').onclick=()=>presenter.toggle();
+
 /* ---------- wiring ------------------------------------------------------ */
 $('gallery-open').onclick=()=>{renderGallery();$('gallery').showModal();};
 $('gallery-close').onclick=()=>$('gallery').close();
@@ -1109,8 +1136,10 @@ $('seam-grip').addEventListener('keydown',e=>{
 
 /* keyboard shortcuts, never while typing */
 document.addEventListener('keydown',e=>{
-  if(e.target.closest('input,select,textarea,[contenteditable]')||e.altKey||e.ctrlKey||e.metaKey||!source)return;
+  if(e.target.closest('input,select,textarea,[contenteditable]')||e.altKey||e.ctrlKey||e.metaKey)return;
   const k=e.key.toLowerCase();
+  if(k==='p'){presenter.toggle();return;}
+  if(!source)return;
   if(k==='c')$('compare').click();
   else if(k==='f')toggleFreeze();
   else if(k==='s')snapshot();
@@ -1119,7 +1148,8 @@ document.addEventListener('keydown',e=>{
 // The seam is positioned in pixels, so it has to be replaced when the box changes.
 window.addEventListener('resize',()=>{if(seamOn)placeSeam();});
 document.addEventListener('fullscreenchange',()=>{if(seamOn)placeSeam();});
-window.addEventListener('pagehide',()=>{stop();if(tracker){tracker.close();tracker=null;ready=false;}});
+// The patient's screen goes with this window: a reload opens it again on request.
+window.addEventListener('pagehide',()=>{presenter.close();stop();if(tracker){tracker.close();tracker=null;ready=false;}});
 $('start').onclick=start;
 $('photo-input').onchange=()=>{const file=$('photo-input').files[0];$('photo-input').value='';openPhoto(file);};
 $('stop').onclick=()=>stop(source?.kind==='photo'?'عکس بسته شد.':'دوربین خاموش شد.');
