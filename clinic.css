@@ -798,6 +798,9 @@ html.embedded .brand{pointer-events:none}
   .product-head h2{font-size:19px}
 }
 
+/* ---- the patient's screen ----------------------------------------------- */
+.present-pill[aria-pressed=true]{border-color:var(--rose);color:var(--text);background:var(--rose-soft)}
+
 /* ---- the patient record ------------------------------------------------- */
 .patient-pill[aria-pressed=true]{border-color:var(--rose);color:var(--text);background:var(--rose-soft)}
 .patient-pill .label{max-width:14ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
