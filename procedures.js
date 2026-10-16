@@ -1,11 +1,13 @@
 // Named procedures, each expressed as weights over the region controls in deform.js.
+// Those controls work in 3D, so a procedure that changes the profile (a hump taken
+// off, a chin brought forward) shows as the head turns.
 //
 // A procedure's weights describe the visible change only. Nothing here models
 // swelling, bruising, healing time, scarring, skin thickness or what any particular
 // surgeon would achieve — each `note` says what the preview leaves out. `kind`,
 // `lasts` and `recovery` are general, commonly quoted ranges, not advice: they vary
 // with the person, the method and the practitioner.
-import {controls, zeroAmounts, regions} from './deform.js?v=1';
+import {controls, zeroAmounts, regions} from './deform.js?v=2';
 
 export {regions};
 export const kinds={surgery:'جراحی',injection:'تزریقی',nonsurgical:'غیرجراحی'};
@@ -13,13 +15,13 @@ export const kinds={surgery:'جراحی',injection:'تزریقی',nonsurgical:'�
 export const procedures=[
   /* ---- nose ---- */
   {id:'rhinoplasty', region:'nose', kind:'surgery', name:'جراحی بینی', short:'بینی',
-   summary:'باریک‌کردن تیغه و پره، ظریف‌کردن و کمی چرخش نوک بینی.',
+   summary:'باریک‌کردن تیغه و پره، برداشتن قوز، ظریف‌کردن و کمی چرخش نوک بینی.',
    lasts:'دائمی', recovery:'حدود ۱ تا ۲ هفته تا برداشتن چسب و آتل؛ فرم نهایی ۱ تا ۲ سال بعد',
-   note:'شکل نهایی بینی به ضخامت پوست و غضروف بستگی دارد و ماه‌ها پس از عمل تثبیت می‌شود. قوز بینی و نیم‌رخ در نمای روبه‌رو دیده نمی‌شوند.',
+   note:'شکل نهایی بینی به ضخامت پوست و غضروف بستگی دارد و ماه‌ها پس از عمل تثبیت می‌شود. برداشتن قوز در نیم‌رخ دیده می‌شود: سر را به پهلو بچرخان.',
    variants:[
-     {id:'natural',name:'طبیعی',weights:{'nose-bridge':-45,'nose-width':-50,'nose-tip':30,'nose-tip-size':-30}},
-     {id:'semi',name:'نیمه‌فانتزی',weights:{'nose-bridge':-60,'nose-width':-70,'nose-tip':50,'nose-tip-size':-45}},
-     {id:'fantasy',name:'فانتزی',weights:{'nose-bridge':-75,'nose-width':-85,'nose-tip':80,'nose-tip-size':-60}}
+     {id:'natural',name:'طبیعی',weights:{'nose-bridge':-45,'nose-width':-50,'nose-tip':30,'nose-tip-size':-30,'nose-hump':-50}},
+     {id:'semi',name:'نیمه‌فانتزی',weights:{'nose-bridge':-60,'nose-width':-70,'nose-tip':50,'nose-tip-size':-45,'nose-hump':-75}},
+     {id:'fantasy',name:'فانتزی',weights:{'nose-bridge':-75,'nose-width':-85,'nose-tip':80,'nose-tip-size':-60,'nose-hump':-100,'nose-projection':-15}}
    ]},
 
   /* ---- lips ---- */
@@ -75,18 +77,18 @@ export const procedures=[
    ]},
 
   {id:'chin-implant', region:'jaw', kind:'surgery', name:'پروتز چانه', short:'چانه',
-   summary:'بلندتر و مشخص‌تر شدن چانه.',
+   summary:'جلوتر، بلندتر و مشخص‌تر شدن چانه.',
    lasts:'پروتز دائمی؛ ژل معمولاً ۱۲ تا ۱۸ ماه', recovery:'پروتز حدود ۱ تا ۲ هفته؛ ژل چند روز',
-   note:'این عمل بیشتر برجستگی رو به جلو ایجاد می‌کند؛ دوربین آن را فقط از نمای روبه‌رو نشان می‌دهد و اندازهٔ واقعی را نمی‌سنجد.',
+   note:'این عمل بیشتر چانه را جلو می‌آورد؛ برای دیدنش سر را به پهلو بچرخان. عمق صورت از روی تصویر یک دوربین تخمین زده می‌شود و اندازهٔ واقعی را نمی‌سنجد.',
    variants:[
-     {id:'implant',name:'پروتز',weights:{'chin-length':50}},
-     {id:'filler',name:'تزریق ژل',kind:'injection',weights:{'chin-length':30,'chin-width':-5}}
+     {id:'implant',name:'پروتز',weights:{'chin-length':35,'chin-projection':70}},
+     {id:'filler',name:'تزریق ژل',kind:'injection',weights:{'chin-length':25,'chin-width':-5,'chin-projection':40}}
    ]},
 
   {id:'v-line', region:'jaw', kind:'surgery', name:'وی‌لاین', short:'وی‌لاین',
    summary:'باریک‌کردن فک و چانه برای فرم V شکل پایین صورت.',
    lasts:'دائمی', recovery:'تورم ۴ تا ۶ هفته؛ نتیجهٔ نهایی چند ماه بعد',
-   note:'جراحی استخوان است و خطرهای خودش را دارد؛ تغییر عمق چانه در نمای روبه‌رو دیده نمی‌شود.',
+   note:'جراحی استخوان است و خطرهای خودش را دارد.',
    weights:{'jaw-width':-55,'chin-width':-55,'chin-length':15}},
 
   {id:'face-lift', region:'jaw', kind:'surgery', name:'لیفت صورت', short:'لیفت',

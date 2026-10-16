@@ -3,7 +3,6 @@
 // is applied, and so on. Optional layers show the tracking mesh, the named contours,
 // the face-local axes every size is measured in, the displacement field of the
 // procedures and the skin-treatment masks.
-import {displace} from './deform.js?v=1';
 
 const PLAIN='#3FD0F0';   // a point nothing is currently using
 const ACTIVE='#FFC53D';  // a point driving what is on screen right now
@@ -15,7 +14,7 @@ function line(ctx,a,b){ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);}
 
 export function renderDebug(context, landmarks, options={}) {
   const {labelSize=10, highlight=true, onlyActive=false, active=null, points=true,
-    mesh=false, contours=false, topology=null, axes=false, defs=null, field=false,
+    mesh=false, contours=false, topology=null, axes=false, field=null,
     masks=null, find=null}=options;
   const {width,height}=context.canvas;
   context.clearRect(0,0,width,height);
@@ -57,21 +56,18 @@ export function renderDebug(context, landmarks, options={}) {
     context.setLineDash([]);
   }
 
-  if(field&&defs&&defs.length){
-    // Every anchor with its reach, then the field sampled on a grid, drawn ×3 so a
+  if(field){
+    // Every deformer's anchor and reach (its reach is in 3D, so this is where it is
+    // centred, drawn as seen face-on), then each visible mesh point's move, ×3 so a
     // subtle edit is still legible.
     context.lineWidth=1*scale;context.strokeStyle='rgba(255,95,210,.45)';context.setLineDash([3*scale,3*scale]);
-    for(const d of defs){context.beginPath();context.arc(d.x,d.y,d.r,0,Math.PI*2);context.stroke();}
+    for(const d of field.anchors){context.beginPath();context.arc(d.x,d.y,d.r,0,Math.PI*2);context.stroke();}
     context.setLineDash([]);
-    const xs=landmarks.map(l=>l.x*width),ys=landmarks.map(l=>l.y*height);
-    const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
-    const step=Math.max(6,(x1-x0)/22),o={x:0,y:0};
-    context.strokeStyle=FIELD;context.fillStyle=FIELD;context.lineWidth=1.2*scale;
-    for(let y=y0-step*2;y<=y1+step*2;y+=step)for(let x=x0-step*2;x<=x1+step*2;x+=step){
-      displace(defs,x,y,o);
-      const len=Math.hypot(o.x,o.y);
-      if(len<.25)continue;
-      const tx=x+o.x*3,ty=y+o.y*3,ang=Math.atan2(o.y,o.x),head=Math.min(4*scale,len*1.5);
+    context.strokeStyle=FIELD;context.lineWidth=1.2*scale;
+    const a=field.arrows;
+    for(let i=0;i<a.length;i+=4){
+      const x=a[i],y=a[i+1],tx=x+a[i+2]*3,ty=y+a[i+3]*3,len=Math.hypot(a[i+2],a[i+3]);
+      const ang=Math.atan2(a[i+3],a[i+2]),head=Math.min(4*scale,len*1.5);
       context.beginPath();context.moveTo(x,y);context.lineTo(tx,ty);
       context.moveTo(tx,ty);context.lineTo(tx-Math.cos(ang-.5)*head,ty-Math.sin(ang-.5)*head);
       context.moveTo(tx,ty);context.lineTo(tx-Math.cos(ang+.5)*head,ty-Math.sin(ang+.5)*head);

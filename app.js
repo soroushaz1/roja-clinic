@@ -1,17 +1,18 @@
-import {createStage,layerModes} from './stage.js?v=1';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,deformers,textureLayers} from './deform.js?v=1';
-import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=1';
-import {renderDebug,nearest} from './debug.js?v=1';
-import {metrics,measure,points as placed,symmetry,pose as poseOf} from './measure.js?v=1';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=1';
-import {createMaskPainter,createSmoother} from './masks.js?v=1';
+import {createStage,layerModes} from './stage.js?v=2';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=2';
+import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=2';
+import {renderDebug,nearest} from './debug.js?v=2';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=2';
+import {createWarp,MESH} from './warp.js?v=2';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=2';
+import {createMaskPainter,createSmoother} from './masks.js?v=2';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='1';
+const RELEASE='2';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -68,6 +69,7 @@ const overrides=Object.fromEntries(controls.map(c=>[c.id,0]));
 let procGroup=null;
 
 const painter=createMaskPainter();
+const warper=createWarp();
 const debug={on:false,points:true,mesh:false,contours:false,axes:false,masks:false,field:false,
   labelSize:10,highlight:true,onlyActive:false,find:null,hud:false,inspect:false};
 let topology=null, maskView=null;
@@ -105,6 +107,9 @@ function status(text){$('status').textContent=text;}
 /* ---------- procedures -------------------------------------------------- */
 const procedureAmounts=()=>amountsFor(active,overrides,variants);
 const anyProcedure=()=>[...active.values()].some(v=>v>0)||controls.some(c=>overrides[c.id]!==0);
+// Whether something on now changes the face in depth, which shows only as the head turns.
+const DEPTH=controls.filter(c=>c.depth).map(c=>c.id);
+const anyDepth=()=>{const a=procedureAmounts();return DEPTH.some(id=>a[id]);};
 
 function showProcedure(id){
   currentProcedure=id;
@@ -228,9 +233,13 @@ function statusText(){
     if(source.kind==='photo')return photoPasses>=PHOTO_PASSES?'در این عکس صورتی پیدا نشد. عکسی از روبه‌رو و با نور کافی انتخاب کن.':'در حال پیدا کردن صورت در عکس…';
     return 'صورت را روبه‌روی دوربین نگه دار.';
   }
-  if(poseAngles&&(Math.abs(poseAngles.yaw)>24||Math.abs(poseAngles.pitch)>22))
-    return 'کمی مستقیم‌تر به دوربین نگاه کن تا نتیجه و اندازه‌ها دقیق‌تر شوند.';
+  // The edits are in 3D and follow the head, so turning is fine, up to where the
+  // tracker itself starts to lose the far side of the face.
+  if(poseAngles&&(Math.abs(poseAngles.yaw)>55||Math.abs(poseAngles.pitch)>35))
+    return 'از این زاویه بیشتر، تشخیص چهره دقت کمتری دارد.';
   if(frozen)return 'تصویر ثابت است. برای ادامه، دوباره «ثابت» را بزن.';
+  if(anyDepth()&&poseAngles&&Math.abs(poseAngles.yaw)<12)
+    return 'این تغییر در نیم‌رخ است: سر را کمی به چپ و راست بچرخان تا دیده شود.';
   return anyProcedure()?'مرز روی تصویر را بکش تا پیش و پس از عمل را مقایسه کنی.':'یک عمل را از نوار زیر تصویر انتخاب کن.';
 }
 
@@ -301,6 +310,8 @@ function draw(now=performance.now()){
   if(overlay.width!==w||overlay.height!==h){overlay.width=w;overlay.height=h;}
   const p=plan();
   const gl=ensureStage();
+  // The warp follows the face, so it is worked out again for every frame drawn.
+  const warp=gl&&landmarks&&p.before?warper.compute(landmarks,w,h,p.amounts):null;
   if(!gl){
     // The procedures need WebGL; without it the picture is shown as it is.
     $('stage').hidden=true;photo.hidden=source.kind!=='photo';dirty=false;return;
@@ -313,8 +324,8 @@ function draw(now=performance.now()){
   const ok=gl.draw({
     source:sync?shown:source.el,width:w,height:h,
     version:sync?`s${shownVersion}`:source.version,live:source.live&&!sync,landmarks,
-    after:{layers:p.textures.map(x=>textureLayer(x,face)),amounts:p.amounts},
-    before:p.before?{layers:[],amounts:null}:null,
+    after:{layers:p.textures.map(x=>textureLayer(x,face)),warp},
+    before:p.before?{layers:[],warp:null}:null,
     seam:seamOn?1-seam:null,grade:null,
     probes:landmarks?probes():null,time:now/1000
   });
@@ -354,13 +365,26 @@ function drawDebug(){
   const settings=JSON.stringify({...debug,hud:0,inspect:0})+[...set].join()+(masksDirty?1:0);
   if(landmarks===debugDrawn&&settings===debugSettings&&!debugDirty)return;
   debugDrawn=landmarks;debugSettings=settings;debugDirty=false;
-  const amounts=procedureAmounts();
   renderDebug(debugCtx,landmarks,{...debug,active:set,topology,
-    defs:debug.field&&landmarks?deformers(landmarks,w,h,amounts):null,
+    field:debug.field?fieldView():null,
     masks:debug.masks&&maskView?maskView:null});
   $('debug-count').textContent=set.size>frameLandmarks.length
     ? `${fa.format(set.size)} نقطه در این لحظه درگیرند.`
     : 'هیچ عملی فعال نیست.';
+}
+
+// The warp, for the debug overlay: each visible mesh point's move in the picture, and
+// every deformer's anchor and reach.
+function fieldView(){
+  const last=warper.last;
+  if(!last)return null;
+  const {P,d,facing}=last,arrows=[];
+  for(let i=0;i<MESH;i++){
+    if(!facing[i])continue;
+    const dx=d[i*3],dy=d[i*3+1];
+    if(Math.hypot(dx,dy)>=.25)arrows.push(P[i].x,P[i].y,dx,dy);
+  }
+  return {arrows,anchors:deformers(P,procedureAmounts()).map(x=>({x:x.x,y:x.y,r:x.r}))};
 }
 
 /* ---------- measurements ------------------------------------------------ */
@@ -371,19 +395,21 @@ function renderMeasure(now){
   const table=$('measure-table');
   if(!landmarks){table.replaceChildren(el('span',{class:'empty',text:'صورت روی تصویر نیست.'}));return;}
   const {w,h}=frameSize();
-  const amounts=procedureAmounts();
-  const before=measure(placed(landmarks,w,h));
-  const after=measure(placed(landmarks,w,h,anyProcedure()?deformers(landmarks,w,h,amounts):null));
+  const P=points3(landmarks,w,h);
+  const before=measure(P);
+  const after=measure(moved(P,anyProcedure()?displacements(P,procedureAmounts()):null));
   const cells=[el('span',{class:'h',text:'اندازه'}),el('span',{class:'h',text:'پیش'}),el('span',{class:'h',text:'پس'}),el('span',{class:'h',text:'تغییر'})];
   const format=m=>m.unit==='×'?fa2.format(m.value):m.unit==='°'?fa1.format(m.value)+'°':fa1.format(m.value)+'٪';
   for(const metric of metrics){
     const a=before[metric.id],b=after[metric.id];
-    const change=metric.id==='canthal'?b.value-a.value:(b.value-a.value)/(Math.abs(a.value)||1)*100;
-    const moved=Math.abs(change)>=(metric.id==='canthal'?.3:.5);
-    const cls=moved?'changed':'';
+    // A ratio or a length changes by a share of itself; an angle, or a measure that
+    // can be near zero or below it (`abs`), by the difference.
+    const change=metric.abs?b.value-a.value:(b.value-a.value)/(Math.abs(a.value)||1)*100;
+    const shifted=Math.abs(change)>=(metric.abs?.3:.5);
+    const cls=shifted?'changed':'';
     const sign=change>0?'+':change<0?'−':'';
     cells.push(el('span',{class:cls,text:metric.name}),el('span',{class:cls,text:format(a)}),el('span',{class:cls,text:format(b)}),
-      el('span',{class:`${cls} ${moved?(change>0?'up':'down'):''}`,text:moved?(metric.id==='canthal'?`${sign}${fa1.format(Math.abs(change))}°`:`${sign}${fa.format(Math.round(Math.abs(change)))}٪`):'—'}));
+      el('span',{class:`${cls} ${shifted?(change>0?'up':'down'):''}`,text:shifted?(metric.abs?`${sign}${fa1.format(Math.abs(change))}${metric.unit==='°'?'°':''}`:`${sign}${fa.format(Math.round(Math.abs(change)))}٪`):'—'}));
   }
   table.replaceChildren(...cells);
 }
@@ -394,8 +420,8 @@ const EXPRESSIONS={jawOpen:'باز بودن دهان',mouthSmileLeft:'لبخند
 function debugStats(){
   const {w,h}=frameSize();
   const amounts=procedureAmounts();
-  const defs=landmarks?deformers(landmarks,w,h,amounts).length:0;
-  const pts=landmarks?placed(landmarks,w,h):null;
+  const pts=landmarks?points3(landmarks,w,h):null;
+  const defs=pts?deformers(pts,amounts).length:0;
   const top=(blendshapes||[]).filter(([n])=>n!=='_neutral').sort((a,b)=>b[1]-a[1]).slice(0,3);
   return [
     ['مسیر نمایش',stage?'WebGL':stageBroken?'—  (بدون WebGL)':'—'],
@@ -442,9 +468,9 @@ function exportData(){
     frame:{width:w,height:h,source:source?.kind||null,frozen},
     landmarks:landmarks?landmarks.map(l=>[+l.x.toFixed(5),+l.y.toFixed(5),+(l.z||0).toFixed(5)]):null,
     pose:poseAngles,blendshapes:blendshapes?Object.fromEntries(blendshapes.map(([n,s])=>[n,+s.toFixed(4)])):null,
-    measurements:landmarks?{before:measure(placed(landmarks,w,h)),
-      after:measure(placed(landmarks,w,h,anyProcedure()?deformers(landmarks,w,h,amounts):null))}:null,
-    symmetry:landmarks?symmetry(placed(landmarks,w,h)):null,
+    measurements:landmarks?{before:measure(points3(landmarks,w,h)),
+      after:measure(moved(points3(landmarks,w,h),anyProcedure()?displacements(points3(landmarks,w,h),amounts):null))}:null,
+    symmetry:landmarks?symmetry(points3(landmarks,w,h)):null,
     procedures:{active:Object.fromEntries(active),variants:Object.fromEntries(variants),amounts:Object.fromEntries(Object.entries(amounts).filter(([,v])=>v))}
   };
 }
@@ -527,7 +553,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=1${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=2${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -547,7 +573,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=1');
+    await import('./face-core.js?v=2');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}

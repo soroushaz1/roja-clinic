@@ -1,21 +1,19 @@
 // The renderer. The camera frame becomes a GPU texture and stays there: each skin
 // treatment is a full-frame pass that smooths it under that layer's mask, and the
-// result is carried through a grid mesh displaced by deform.js for the shape changes.
-// The frame is never read back, sent or stored.
+// result is warped for the shape changes (warp.js): through a background grid, and
+// over it the face mesh itself, depth-tested. The frame is never read back, sent or
+// stored.
 //
 // Masks are painted once, in the face's own front-on space (facemesh.js), whenever a
 // treatment changes. Every frame the face mesh, placed on the live landmarks,
 // carries each one onto the face: a few hundred triangles on the GPU instead of
 // repainting every mask on the CPU each time the face moves.
 //
-// With no layers and an all-zero displacement field the output is a pixel-exact copy
-// of the camera frame.
-import {deformers,displace} from './deform.js?v=1';
-import {CANON,TRIANGLES} from './facemesh.js?v=1';
-import * as GLSL from './shaders.js?v=1';
+// With no layers and no warp the output is a pixel-exact copy of the camera frame.
+import {COLS,ROWS,GRID,MESH} from './warp.js?v=2';
+import {CANON,TRIANGLES,WARP_TRIANGLES} from './facemesh.js?v=2';
+import * as GLSL from './shaders.js?v=2';
 
-const COLS=64, ROWS=48;          // resolves the smallest anchor radius
-const GRID=(COLS+1)*(ROWS+1);
 const LANDMARKS=468;
 
 // The triangles of the face mesh that reach into a box of face space, and their corners.
@@ -34,7 +32,7 @@ export const layerModes={pigment:0,tint:1,shade:2,glow:3,foundation:4,smooth:5};
 
 export function createStage(canvas) {
   let gl;
-  const options={alpha:false,antialias:false,depth:false,preserveDrawingBuffer:true};
+  const options={alpha:false,antialias:false,depth:true,preserveDrawingBuffer:true};
   try{gl=canvas.getContext('webgl',options)||canvas.getContext('experimental-webgl',options);}
   catch{return null;}
   if(!gl) return null;
@@ -59,7 +57,7 @@ export function createStage(canvas) {
       return {program,uniforms,pos:gl.getAttribLocation(program,'a_pos'),uv:gl.getAttribLocation(program,'a_uv')};
     };
     const F=GLSL.PRECISION;
-    programs={out:link(GLSL.MESH_VERT,F+GLSL.OUT_FRAG),down:link(GLSL.QUAD_VERT,F+GLSL.DOWN_FRAG),
+    programs={out:link(GLSL.MESH_VERT,F+GLSL.OUT_FRAG),warp:link(GLSL.WARP_VERT,F+GLSL.OUT_FRAG),down:link(GLSL.QUAD_VERT,F+GLSL.DOWN_FRAG),
       stats:link(GLSL.QUAD_VERT,F+GLSL.STATS_FRAG),layer:link(GLSL.QUAD_VERT,F+GLSL.LAYER_FRAG),
       mask:link(GLSL.MASK_VERT,F+GLSL.MASK_FRAG)};
   }catch{return null;}
@@ -81,6 +79,14 @@ export function createStage(canvas) {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
   const quadBuffer=gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER,quadBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  // The warp's face mesh: where its points have moved to (with depth), and where in
+  // the frame they were.
+  const meshPosBuffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,meshPosBuffer);gl.bufferData(gl.ARRAY_BUFFER,MESH*3*4,gl.DYNAMIC_DRAW);
+  const meshUvBuffer=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,meshUvBuffer);gl.bufferData(gl.ARRAY_BUFFER,MESH*2*4,gl.DYNAMIC_DRAW);
+  const meshIndexBuffer=gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,meshIndexBuffer);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,WARP_TRIANGLES,gl.STATIC_DRAW);
   // The face mesh: live landmark positions (per frame) and face-space coordinates.
   const facePos=new Float32Array(LANDMARKS*2);
   const facePosBuffer=gl.createBuffer();
@@ -225,18 +231,17 @@ export function createStage(canvas) {
   }
 
   // Texture row 0 is the top of the frame, so v runs down with y and clip y is flipped.
-  const offset={x:0,y:0};
-  function drawMesh(tex,defs,width,height){
+  // `field`: each grid point's move in pixels (warp.js), or null for none.
+  function drawGrid(tex,field,width,height,grade){
     const p=programs.out;
     gl.useProgram(p.program);
-    for(let r=0,i=0;r<=ROWS;r++){
+    gl.uniform3f(p.uniforms.u_grade,grade[0],grade[1],grade[2]);
+    for(let r=0,i=0,g=0;r<=ROWS;r++){
       const py=r/ROWS*height;
-      for(let c=0;c<=COLS;c++){
+      for(let c=0;c<=COLS;c++,g+=2){
         const px=c/COLS*width;
-        let x=px,y=py;
-        if(defs.length){displace(defs,px,py,offset);x+=offset.x;y+=offset.y;}
-        positions[i++]=x/width*2-1;
-        positions[i++]=1-y/height*2;
+        positions[i++]=(field?px+field[g]:px)/width*2-1;
+        positions[i++]=1-(field?py+field[g+1]:py)/height*2;
       }
     }
     gl.bindBuffer(gl.ARRAY_BUFFER,posBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,positions);
@@ -246,6 +251,23 @@ export function createStage(canvas) {
     bindTex(0,tex,p.uniforms.u_tex);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,indexBuffer);
     gl.drawElements(gl.TRIANGLES,indices.length,gl.UNSIGNED_SHORT,0);
+  }
+  // The face over the grid: each triangle where its corners have moved to, nearer
+  // ones covering those behind.
+  function drawFace(tex,mesh,grade){
+    const p=programs.warp;
+    gl.useProgram(p.program);
+    gl.uniform3f(p.uniforms.u_grade,grade[0],grade[1],grade[2]);
+    gl.bindBuffer(gl.ARRAY_BUFFER,meshPosBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,mesh.pos);
+    gl.enableVertexAttribArray(p.pos);gl.vertexAttribPointer(p.pos,3,gl.FLOAT,false,0,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,meshUvBuffer);gl.bufferSubData(gl.ARRAY_BUFFER,0,mesh.uv);
+    gl.enableVertexAttribArray(p.uv);gl.vertexAttribPointer(p.uv,2,gl.FLOAT,false,0,0);
+    bindTex(0,tex,p.uniforms.u_tex);
+    gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LESS);gl.clearDepth(1);gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,meshIndexBuffer);
+    gl.drawElements(gl.TRIANGLES,WARP_TRIANGLES.length,gl.UNSIGNED_SHORT,0);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disableVertexAttribArray(p.uv);
   }
 
   return {
@@ -268,7 +290,7 @@ export function createStage(canvas) {
     dropMasks(keep){
       for(const [key,entry] of masks)if(!keep||!keep.has(key)){gl.deleteTexture(entry.tex);gl.deleteBuffer(entry.tris);masks.delete(key);}
     },
-    // after/before: {layers, landmarks, amounts}. `before` is drawn from `seam` (a
+    // after/before: {layers, warp}, warp from warp.js or null. `before` is drawn from `seam` (a
     // canvas-space fraction) to the far edge. The canvas is mirrored in CSS, so the
     // caller passes the complement of the fraction it wants shown on screen.
     draw({source,width,height,version,live,landmarks,after,before=null,seam=null,grade=null,probes,time=0}){
@@ -297,17 +319,18 @@ export function createStage(canvas) {
 
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);
       gl.viewport(0,0,width,height);
-      const p=programs.out;gl.useProgram(p.program);
-      const g=grade||[1,1,1];gl.uniform3f(p.uniforms.u_grade,g[0],g[1],g[2]);
-      // No face, or no change asked for: the identity mesh.
-      const afterDefs=face&&after.amounts?deformers(landmarks,width,height,after.amounts):[];
-      drawMesh(afterTex,afterDefs,width,height);
+      const g=grade||[1,1,1];
+      // No face, or no change asked for: the identity grid alone.
+      const warp=face&&after.warp;
+      drawGrid(afterTex,warp?warp.grid:null,width,height,g);
+      if(warp)drawFace(afterTex,warp.mesh,g);
       if(before&&seam!==null){
         const start=Math.max(0,Math.min(width,Math.round(seam*width)));
         gl.enable(gl.SCISSOR_TEST);
         gl.scissor(start,0,width-start,height);
-        const beforeDefs=face&&before.amounts?deformers(landmarks,width,height,before.amounts):[];
-        drawMesh(beforeTex,beforeDefs,width,height);
+        const bw=face&&before.warp;
+        drawGrid(beforeTex,bw?bw.grid:null,width,height,g);
+        if(bw)drawFace(beforeTex,bw.mesh,g);
         gl.disable(gl.SCISSOR_TEST);
       }
       return true;
@@ -316,7 +339,7 @@ export function createStage(canvas) {
     dispose(){
       if(disposed)return;
       disposed=true;
-      for(const handle of [posBuffer,uvBuffer,indexBuffer,quadBuffer,facePosBuffer,canonBuffer])gl.deleteBuffer(handle);
+      for(const handle of [posBuffer,uvBuffer,indexBuffer,quadBuffer,facePosBuffer,canonBuffer,meshPosBuffer,meshUvBuffer,meshIndexBuffer])gl.deleteBuffer(handle);
       gl.deleteTexture(camera);
       for(const entry of masks.values()){gl.deleteTexture(entry.tex);gl.deleteBuffer(entry.tris);}
       if(targets)Object.values(targets).flat().forEach(dropTarget);
