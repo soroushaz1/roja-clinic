@@ -12,8 +12,8 @@
 //
 // Both use the same displacements, projected straight onto the picture: at the
 // distance of a face from a camera, perspective changes them by a few percent at most.
-import {points3,headFrame,displacements} from './deform.js?v=2';
-import {WARP_TRIANGLES} from './facemesh.js?v=2';
+import {points3,headFrame,displacements} from './deform.js?v=3';
+import {WARP_TRIANGLES} from './facemesh.js?v=3';
 
 export const COLS=64, ROWS=48;           // the background grid
 export const GRID=(COLS+1)*(ROWS+1);
