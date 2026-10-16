@@ -9,6 +9,8 @@
 > [Roja](https://github.com/soroushaz1/roja)'s procedure mode to be developed on its own,
 > towards a beta for a handful of doctors.
 
+![پیش‌نمایش جراحی بینی با مرز پیش و پس، جدول اندازه‌ها و نوار انتخاب عمل](screenshots/clinic.png)
+
 این مخزن از بخش «عمل‌های زیبایی» سایت رُژا جدا شده و از این به بعد جداگانه توسعه پیدا می‌کند.
 آرایش، فروشگاه‌ها، تحلیل پوست و اپ اندروید در رُژا مانده‌اند و اینجا نیستند.
 
