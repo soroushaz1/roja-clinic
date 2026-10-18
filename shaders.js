@@ -1,7 +1,8 @@
 // The renderer's shaders, in GLSL ES 1.00, compiled by stage.js. They come from Roja's
 // makeup mirror: the clinic uses the grid and the warp's face mesh (MESH_VERT,
-// WARP_VERT, OUT_FRAG), the face-space masks and the `smooth` layer mode; the colour
-// modes are there for when a treatment needs one.
+// WARP_VERT, OUT_FRAG, and SEEN_* and WARP_FRAG for what the camera could not see),
+// the face-space masks and the `smooth` layer mode; the colour modes are there for
+// when a treatment needs one.
 //
 // Plain template literals only: no interpolation, no backquotes inside. Fragment
 // shaders get PRECISION prepended by whoever compiles them.
@@ -19,9 +20,43 @@ precision mediump float;
 export const MESH_VERT=`attribute vec2 a_pos;attribute vec2 a_uv;varying vec2 v_uv;
 void main(){v_uv=a_uv;gl_Position=vec4(a_pos,0.,1.);}`;
 
-// The warp's face mesh: moved points, with depth so nearer triangles cover farther ones.
-export const WARP_VERT=`attribute vec3 a_pos;attribute vec2 a_uv;varying vec2 v_uv;
-void main(){v_uv=a_uv;gl_Position=vec4(a_pos,1.);}`;
+// The warp's face mesh: moved points, with depth so nearer triangles cover farther ones,
+// and each point's depth where it was (a_src), for WARP_FRAG.
+export const WARP_VERT=`attribute vec3 a_pos;attribute vec2 a_uv;attribute float a_src;varying vec2 v_uv;varying float v_src;
+void main(){v_uv=a_uv;v_src=a_src*.5+.5;gl_Position=vec4(a_pos,1.);}`;
+
+// The face as the camera saw it: the mesh where it was, each pixel holding the depth of
+// the nearest surface there, packed into two 8-bit channels. Where there is no face it
+// keeps the clear colour, which reads as farther than any face.
+export const SEEN_VERT=`attribute vec2 a_uv;attribute float a_src;
+void main(){gl_Position=vec4(a_uv*2.-1.,a_src,1.);}`;
+export const SEEN_FRAG=`void main(){float d=gl_FragCoord.z*255.;gl_FragColor=vec4(floor(d)/255.,fract(d),0.,1.);}`;
+
+// The face mesh's texture. A point the camera could not see (the far cheek behind the
+// nose on a turned head) has, in the picture, whatever hid it. When an edit uncovers
+// it, it takes the skin around it that the camera did see at about its depth: the
+// mean of the nearest ring of such pixels, so the fill is smooth rather than speckled,
+// and the skin just past the old outline rather than the old outline itself.
+export const WARP_FRAG=`uniform sampler2D u_tex;uniform sampler2D u_seen;uniform vec3 u_grade;uniform vec2 u_step;uniform float u_tol;
+varying vec2 v_uv;varying float v_src;
+float seen(vec2 uv){vec4 d=texture2D(u_seen,uv);return d.r+d.g/255.;}
+void main(){
+  vec4 c=texture2D(u_tex,v_uv);
+  if(seen(v_uv)<v_src-u_tol){
+    vec4 sum=vec4(0.);float n=0.;
+    for(int r=1;r<=24;r++){
+      for(int k=0;k<12;k++){
+        float a=float(k)*.5236+float(r)*.2618;
+        vec2 s=v_uv+vec2(cos(a),sin(a))*float(r)*u_step;
+        float d=seen(s)-v_src,ok=d>=-u_tol&&d<=3.*u_tol?1.:0.;
+        sum+=texture2D(u_tex,s)*ok;n+=ok;
+      }
+      if(n>0.)break;
+    }
+    if(n>0.)c=sum/n;
+  }
+  gl_FragColor=vec4(c.rgb*u_grade,c.a);
+}`;
 
 // A grade of (1,1,1) multiplies by exactly one, so the plain view stays exact.
 export const OUT_FRAG=`uniform sampler2D u_tex;uniform vec3 u_grade;varying vec2 v_uv;

@@ -473,7 +473,9 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
       await dp.keyboard.press('p');
       await pop.waitForEvent('close',{timeout:5000}).catch(()=>{});
       assert.equal(pop.isClosed(),true,'P did not close the patient screen');
-      assert.equal(await dp.locator('#present-open').getAttribute('aria-pressed'),'false','the button still shows the screen open');
+      // The button follows the window on the app's next frame.
+      await dp.waitForFunction(()=>document.querySelector('#present-open').getAttribute('aria-pressed')==='false',null,{timeout:5000})
+        .catch(()=>assert.fail('the button still shows the screen open'));
       const [again]=await Promise.all([dp.waitForEvent('popup'),dp.keyboard.press('p')]);
       await again.waitForLoadState();
       assert.deepEqual(perrors,[],'page errors around the patient screen');

@@ -12,8 +12,15 @@
 //
 // Both use the same displacements, projected straight onto the picture: at the
 // distance of a face from a camera, perspective changes them by a few percent at most.
-import {points3,headFrame,displacements} from './deform.js?v=4';
-import {WARP_TRIANGLES} from './facemesh.js?v=4';
+//
+// The mesh also carries each point's depth where it was. Turned away from the camera,
+// part of the face is hidden in the picture (the far cheek behind the nose): what the
+// picture shows there is whatever hid it. An edit that uncovers it (a narrower nose,
+// a hump taken off) would otherwise show the old nose there again; the stage compares
+// these depths with the face as the camera saw it and fills those places from the
+// nearest skin the camera did see.
+import {points3,headFrame,displacements} from './deform.js?v=5';
+import {WARP_TRIANGLES} from './facemesh.js?v=5';
 
 export const COLS=64, ROWS=48;           // the background grid
 export const GRID=(COLS+1)*(ROWS+1);
@@ -25,7 +32,7 @@ const SPREAD=.06, FLOOR=.044;
 
 export function createWarp(){
   const grid=new Float32Array(GRID*2);
-  const pos=new Float32Array(MESH*3), uv=new Float32Array(MESH*2);
+  const pos=new Float32Array(MESH*3), uv=new Float32Array(MESH*2), src=new Float32Array(MESH);
   const facing=new Float32Array(MESH), normals=new Float32Array(MESH*3);
   let last=null;
 
@@ -86,15 +93,18 @@ export function createWarp(){
     }
   }
 
-  // The mesh where it has moved to (clip space, with depth: nearer is smaller), and
-  // where its texture comes from (the frame, row 0 at the top).
+  // The mesh where it has moved to (clip space, with depth: nearer is smaller), where
+  // its texture comes from (the frame, row 0 at the top), and its depth there, on the
+  // same scale.
   function mesh(P,d,frame,W,H){
+    const depth=z=>Math.max(-.99,Math.min(.99,(z-frame.center.z)/(frame.face*2)));
     for(let i=0;i<MESH;i++){
       const q=P[i];
       pos[i*3]=(q.x+d[i*3])/W*2-1;
       pos[i*3+1]=1-(q.y+d[i*3+1])/H*2;
-      pos[i*3+2]=Math.max(-.99,Math.min(.99,(q.z+d[i*3+2]-frame.center.z)/(frame.face*2)));
+      pos[i*3+2]=depth(q.z+d[i*3+2]);
       uv[i*2]=q.x/W;uv[i*2+1]=q.y/H;
+      src[i]=depth(q.z);
     }
   }
 
@@ -111,7 +121,7 @@ export function createWarp(){
       background(P,d,frame,W,H);
       mesh(P,d,frame,W,H);
       last={P,d,facing,frame};
-      return {grid,mesh:{pos,uv}};
+      return {grid,mesh:{pos,uv,src,face:frame.face}};
     },
     // The landmarks, their moves and how squarely each faces the camera, from the
     // last compute(): for the debug overlay.
