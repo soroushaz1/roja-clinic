@@ -86,10 +86,13 @@ jobs:
           done
           [ -n "$ok" ] || { echo "::error::$base does not serve $want. Is Roja's nginx site (with /clinic/) deployed?"; exit 1; }
           type(){ curl -fsSI --max-time 20 "$base$1" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2}'; }
-          for f in "vendor/wasm/vision_wasm_internal.wasm application/wasm" "vendor/vision_bundle.mjs text/javascript" \
-                   "app.js text/javascript" "present.html text/html" "vendor/face_landmarker.task application/octet-stream"; do
+          # Each file and the types browsers accept for it (a regex): scripts may come as
+          # either JavaScript type, modules included.
+          for f in "vendor/wasm/vision_wasm_internal.wasm application/wasm" "vendor/vision_bundle.mjs (text|application)/javascript" \
+                   "app.js (text|application)/javascript" "present.html text/html" "vendor/face_landmarker.task application/octet-stream"; do
             set -- $f; got=$(type "$1")
-            case "$got" in "$2"*) echo "$1: $got";; *) echo "::error::$1 is served as '${got:-nothing}', not $2"; exit 1;; esac
+            if printf '%s' "$got" | grep -Eq "^($2)"; then echo "$1: $got"
+            else echo "::error::$1 is served as '${got:-nothing}', not $2"; exit 1; fi
           done
 
       - name: Forget the key
