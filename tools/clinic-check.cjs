@@ -357,7 +357,9 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
       const shotCount=n=>rp.waitForFunction(n=>document.querySelectorAll('#record-shots .shot').length===n,n,{timeout:20000});
       await rp.locator('#patient-open').click();
       assert.equal(await rp.locator('#patients').isVisible(),true,'the patient list did not open');
-      assert.match(await rp.locator('#patient-list').textContent(),/هنوز بیماری ثبت نشده/,'a fresh record is not empty');
+      // The list fills in from IndexedDB a moment after the dialog opens.
+      await rp.waitForFunction(()=>/هنوز بیماری ثبت نشده/.test(document.querySelector('#patient-list').textContent),null,{timeout:10000})
+        .catch(()=>assert.fail('a fresh record is not empty'));
       await rp.locator('#clinic-settings summary').click();
       await rp.locator('#clinic-name').fill('کلینیک نمونه');await rp.locator('#doctor-name').fill('دکتر نمونه');
       await rp.locator('#patient-new').click();
