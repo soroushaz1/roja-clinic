@@ -7,7 +7,7 @@
 //     plan: [{name, variant, strength, detail}],
 //     shots: [{before, after (images), box: {x, y, w, h} (fractions), label, yaw,
 //              measures: {before, after}}]}
-import {metrics} from './measure.js?v=6';
+import {metrics} from './measure.js?v=7';
 
 export const PAGE={w:1240,h:1754};
 const W=PAGE.w,H=PAGE.h,M=96,INNER=W-2*M,FOOT=70;

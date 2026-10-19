@@ -1,20 +1,20 @@
-import {createStage,layerModes} from './stage.js?v=6';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=6';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=6';
-import {renderDebug,nearest} from './debug.js?v=6';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=6';
-import {createWarp,MESH} from './warp.js?v=6';
-import {createRecords} from './records.js?v=6';
-import {createPresenter} from './presenter.js?v=6';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=6';
-import {createMaskPainter,createSmoother} from './masks.js?v=6';
+import {createStage,layerModes} from './stage.js?v=7';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=7';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=7';
+import {renderDebug,nearest} from './debug.js?v=7';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=7';
+import {createWarp,MESH} from './warp.js?v=7';
+import {createRecords} from './records.js?v=7';
+import {createPresenter} from './presenter.js?v=7';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=7';
+import {createMaskPainter,createSmoother} from './masks.js?v=7';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='6';
+const RELEASE='7';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -558,7 +558,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=6${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=7${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -578,7 +578,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=6');
+    await import('./face-core.js?v=7');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
