@@ -578,6 +578,9 @@ details > summary + *{margin-top:10px}
 .past li span{flex:1;color:var(--muted)}
 .past small{color:var(--faint)}
 .fine-group{font-size:12px;color:var(--brass);margin:14px 0 0}
+.presets{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 4px}
+.presets span{font-size:12px;color:var(--muted)}
+.presets .chip{padding:4px 11px;font-size:12.5px}
 
 /* ---- debug ------------------------------------------------------------- */
 .debug-group{border:1px solid var(--line-soft);border-radius:10px;padding:4px 12px 10px;margin:10px 0 0;

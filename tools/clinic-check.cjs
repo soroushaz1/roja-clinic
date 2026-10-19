@@ -223,6 +223,28 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.locator('#procedure-reset').click();await settle(page);
     assert(changed(identity,await page.evaluate(probe,{GX,GY}),.8).count===0,'resetting left a fine control on');
 
+    // A lip style sets the lip sliders in one click, shows as picked while they match,
+    // and changes the picture; moving a slider by hand unpicks it.
+    await page.locator('[data-lip-style="russian"]').click();await page.waitForTimeout(80);await settle(page);
+    const lipSliders=()=>page.evaluate(()=>Object.fromEntries([...document.querySelectorAll('[data-fine^="lip-"]')].map(i=>[i.dataset.fine,Number(i.value)])));
+    const russian=await lipSliders();
+    assert.equal(russian['lip-center'],70,'the Russian style did not set the middle of the lips');
+    assert.equal(russian['lip-fullness'],0,'the Russian style left another lip slider on');
+    assert.equal(await page.locator('[data-lip-style="russian"]').getAttribute('aria-pressed'),'true','the Russian style does not show as picked');
+    assert(changed(identity,await page.evaluate(probe,{GX,GY}),.8).count>0,'a lip style changed nothing');
+    await page.locator('[data-lip-style="m-shape"]').click();
+    assert.equal((await lipSliders())['lip-bow'],80,'the M style did not set the bow of the lip');
+    assert.equal(await page.locator('[data-lip-style="russian"]').getAttribute('aria-pressed'),'false','two lip styles show as picked');
+    await setSlider(page,'#fine-lip-bow',10);
+    assert.equal(await page.locator('[data-lip-style="m-shape"]').getAttribute('aria-pressed'),'false','a lip style still shows as picked after a slider moved');
+    await page.locator('#procedure-reset').click();await settle(page);
+    assert.equal((await lipSliders())['lip-bow'],0,'resetting left a lip style on');
+    // The nose tip moves sideways too.
+    await setSlider(page,'#fine-nose-tip-side',100);await page.waitForTimeout(80);await settle(page);
+    assert(changed(identity,await page.evaluate(probe,{GX,GY}),.8).count>0,'moving the nose tip sideways changed nothing');
+    await page.locator('#procedure-reset').click();await settle(page);
+    report.lipStyles='one click sets the lip sliders';
+
     // Losing the face must not leave a warped frame behind.
     await page.locator('[data-procedure="rhinoplasty"]').click();
     await setSlider(page,'#strength',100);

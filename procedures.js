@@ -7,10 +7,32 @@
 // surgeon would achieve — each `note` says what the preview leaves out. `kind`,
 // `lasts` and `recovery` are general, commonly quoted ranges, not advice: they vary
 // with the person, the method and the practitioner.
-import {controls, zeroAmounts, regions} from './deform.js?v=5';
+import {controls, zeroAmounts, regions} from './deform.js?v=6';
 
 export {regions};
 export const kinds={surgery:'جراحی',injection:'تزریقی',nonsurgical:'غیرجراحی'};
+
+// Lip styles patients ask for by name. The names are the ones used in clinics; what
+// each means varies from one injector to the next, so these are a starting point to
+// adjust with the sliders, not a definition. Each sets the lip controls (the rest of
+// them to zero), both as the lip-filler procedure's variants and as one-click presets
+// in the fine-tuning panel.
+export const lipStyles=[
+  {id:'natural',  name:'طبیعی',     about:'کمی پرتر، با همان فرم خود لب',
+   weights:{'lip-fullness':35,'lip-upper':20,'lip-lower':15}},
+  {id:'russian',  name:'روسی',      about:'بلندی در وسط لب، نیم‌رخ صاف، گوشه‌ها بدون حجم',
+   weights:{'lip-center':70,'lip-upper':25,'lip-lower':20,'lip-bow':25,'lip-corners':10,'lip-projection':-25}},
+  {id:'m-shape',  name:'M شکل',     about:'دو قلهٔ مشخص لب بالا و فرورفتگی وسط آن',
+   weights:{'lip-bow':80,'lip-upper':35,'lip-center':20,'lip-lower':15}},
+  {id:'french',   name:'فرانسوی',   about:'ظریف، لب بالا کمی برگشته و خط لب مشخص',
+   weights:{'lip-upper':30,'lip-bow':25,'lip-lower':10,'lip-fullness':10,'lip-projection':15}},
+  {id:'heart',    name:'قلبی',      about:'پری بیشتر در وسط لب بالا، باریک‌تر به سمت گوشه‌ها',
+   weights:{'lip-center':45,'lip-upper':40,'lip-bow':35,'lip-lower':20,'lip-width':-10}},
+  {id:'venus',    name:'ونوس',      about:'تناسب لب بالا و پایین حدود یک به یک‌ونیم، با قوس مشخص',
+   weights:{'lip-bow':45,'lip-upper':25,'lip-lower':50,'lip-fullness':20}},
+  {id:'hollywood',name:'پرحجم',     about:'حجم زیاد هر دو لب و کمی جلوتر',
+   weights:{'lip-fullness':70,'lip-upper':40,'lip-lower':40,'lip-projection':25,'lip-width':5}}
+];
 
 export const procedures=[
   /* ---- nose ---- */
@@ -26,14 +48,10 @@ export const procedures=[
 
   /* ---- lips ---- */
   {id:'lip-filler', region:'lips', kind:'injection', name:'تزریق ژل لب', short:'لب',
-   summary:'پرتر شدن حجم لب؛ متعادل یا با تأکید روی لب بالا.',
+   summary:'پرتر شدن حجم لب، با مدل‌های رایج: طبیعی، روسی، M شکل، فرانسوی، قلبی، ونوس و پرحجم.',
    lasts:'معمولاً ۶ تا ۱۲ ماه', recovery:'تورم و گاهی کبودی چند روز',
-   note:'نتیجه به نوع ژل، حجم تزریق و فرم طبیعی لب بستگی دارد و با گذشت زمان جذب می‌شود.',
-   variants:[
-     {id:'balanced',name:'متعادل',weights:{'lip-fullness':45,'lip-upper':30,'lip-lower':25}},
-     {id:'upper',name:'تأکید لب بالا',weights:{'lip-fullness':20,'lip-upper':75,'lip-lower':10,'lip-lift':10}},
-     {id:'full',name:'پرحجم',weights:{'lip-fullness':75,'lip-upper':40,'lip-lower':35}}
-   ]},
+   note:'نتیجه به نوع ژل، حجم تزریق و فرم طبیعی لب بستگی دارد و با گذشت زمان جذب می‌شود. نام مدل‌ها (روسی، M شکل و…) در هر مطب معنای کمی متفاوتی دارد؛ با اسلایدرها تنظیمشان کن.',
+   variants:lipStyles.map(({id,name,weights})=>({id,name,weights}))},
 
   {id:'lip-lift', region:'lips', kind:'surgery', name:'لیفت لب بالا', short:'لیفت لب',
    summary:'کوتاه‌شدن فاصلهٔ زیر بینی تا لب و دیده‌شدن بیشتر لب بالا.',

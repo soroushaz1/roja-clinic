@@ -1,20 +1,20 @@
-import {createStage,layerModes} from './stage.js?v=5';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=5';
-import {procedures,byId,amountsFor,resolve,kinds} from './procedures.js?v=5';
-import {renderDebug,nearest} from './debug.js?v=5';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=5';
-import {createWarp,MESH} from './warp.js?v=5';
-import {createRecords} from './records.js?v=5';
-import {createPresenter} from './presenter.js?v=5';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=5';
-import {createMaskPainter,createSmoother} from './masks.js?v=5';
+import {createStage,layerModes} from './stage.js?v=6';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=6';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=6';
+import {renderDebug,nearest} from './debug.js?v=6';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=6';
+import {createWarp,MESH} from './warp.js?v=6';
+import {createRecords} from './records.js?v=6';
+import {createPresenter} from './presenter.js?v=6';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=6';
+import {createMaskPainter,createSmoother} from './masks.js?v=6';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='5';
+const RELEASE='6';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -558,7 +558,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=5${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=6${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -578,7 +578,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=5');
+    await import('./face-core.js?v=6');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -1013,6 +1013,7 @@ $('procedure-reset').onclick=()=>{
     const input=$(`fine-${control.id}`);if(input)setRange(input.id,0);
     const amount=$(`fine-${control.id}-amount`);if(amount)amount.textContent=fa.format(0);
   }
+  syncLipStyles();
   showProcedure(null);buildTray();updateSeam();invalidate({masks:true,measure:true});status(statusText());
 };
 // Turned off with several on: keep the one being looked at.
@@ -1026,9 +1027,31 @@ $('combine-procedures').onchange=()=>{
   }
   toast(on?'عمل‌ها با هم ترکیب می‌شوند: هر عملی که بزنی به قبلی‌ها اضافه می‌شود.':'هر بار یک عمل: عمل تازه جای قبلی را می‌گیرد.');
 };
+// A fine control set from code, as if moved by hand.
+function setFine(id,value){
+  overrides[id]=value;setRange(`fine-${id}`,value);
+  $(`fine-${id}-amount`).textContent=fa.format(value);
+}
+function fineChanged(){
+  $('procedure-reset').hidden=!anyProcedure();
+  syncLipStyles();updateSeam();invalidate({masks:true,measure:true});status(statusText());
+}
+// The lip styles as one-click presets: each sets every lip control, the ones it does
+// not name to zero. A style shows as picked while the lip sliders still match it.
+const LIPS=controls.filter(c=>c.region==='lips');
+function syncLipStyles(){
+  for(const b of document.querySelectorAll('[data-lip-style]')){
+    const style=lipStyles.find(x=>x.id===b.dataset.lipStyle);
+    b.setAttribute('aria-pressed',String(LIPS.every(c=>overrides[c.id]===(style.weights[c.id]||0))));
+  }
+}
 for(const region of regions){
   const list=controls.filter(c=>c.region===region.id);
   $('fine-controls').append(el('p',{class:'fine-group',text:region.name}));
+  if(region.id==='lips')$('fine-controls').append(el('div',{class:'presets',role:'group','aria-label':'مدل‌های آماده لب'},
+    el('span',{text:'مدل‌های آماده:'}),
+    ...lipStyles.map(style=>el('button',{class:'chip',type:'button','aria-pressed':'false',data:{lipStyle:style.id},title:style.about,
+      onclick:()=>{for(const c of LIPS)setFine(c.id,style.weights[c.id]||0);fineChanged();toast(`مدل لب ${style.name}: ${style.about}`);}},style.name))));
   for(const control of list){
     const [min,max]=controlRange(control);
     const amount=el('output',{id:`fine-${control.id}-amount`,text:fa.format(0)});
@@ -1038,8 +1061,7 @@ for(const region of regions){
     input.oninput=()=>{
       overrides[control.id]=Number(input.value);
       amount.textContent=fa.format(Number(input.value));
-      $('procedure-reset').hidden=!anyProcedure();
-      updateSeam();invalidate({masks:true,measure:true});status(statusText());
+      fineChanged();
     };
     $('fine-controls').append(label,input,el('p',{class:'help',id:`fine-${control.id}-help`,text:control.help}));
   }

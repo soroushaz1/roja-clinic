@@ -10,12 +10,12 @@
 // Depth comes from one camera: the model infers it from the picture, it does not
 // measure it. Read the profile measurements (`abs`) as a comparison of before and
 // after on one face, not as millimetres.
-import {headFrame} from './deform.js?v=5';
+import {headFrame,hump,BRIDGE} from './deform.js?v=6';
 
 export const metrics=[
   {id:'nose-width', name:'پهنای پرهٔ بینی', span:[64,294]},
   {id:'nose-eyes',  name:'پهنای بینی / فاصلهٔ دو چشم', ratio:[[64,294],[133,362]]},
-  {id:'dorsum',     name:'قوز تیغهٔ بینی', hump:[168,4,[6,197,195,5]], abs:true},
+  {id:'dorsum',     name:'قوز تیغهٔ بینی', bridge:true, abs:true},
   {id:'nose-proj',  name:'جلوآمدگی نوک بینی', forward:[1,[64,294]], abs:true},
   {id:'mouth',      name:'پهنای دهان', span:[61,291]},
   {id:'lip-upper',  name:'ضخامت لب بالا', span:[0,13]},
@@ -36,7 +36,7 @@ export const metrics=[
 // Every landmark read here, for the debug overlay.
 export const measuredLandmarks=[...new Set(metrics.flatMap(m=>[
   ...(m.span||[]),...(m.spans||[]).flat(),...(m.ratio||[]).flat(),...(m.tilt?[33,133,263,362]:[]),
-  ...(m.hump?[m.hump[0],m.hump[1],...m.hump[2]]:[]),...(m.forward?[m.forward[0],...m.forward[1]]:[])]))];
+  ...(m.bridge?BRIDGE:[]),...(m.forward?[m.forward[0],...m.forward[1]]:[])]))];
 
 const PAIRS=[[33,263],[133,362],[61,291],[105,334],[172,397],[50,280],[70,300]];
 const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y,z:a.z-b.z});
@@ -68,17 +68,11 @@ export function measure(pts){
       const [a,refs]=m.forward;
       const ref=refs.reduce((s,i)=>({x:s.x+pts[i].x/refs.length,y:s.y+pts[i].y/refs.length,z:s.z+pts[i].z/refs.length}),{x:0,y:0,z:0});
       out[m.id]={value:dot(sub(pts[a],ref),ez)/face*100,unit:'%'};
-    }else if(m.hump){
-      // The bridge of the nose against the straight line from its root to the tip:
-      // the most any point between stands forward of it (negative for a scooped one).
-      const [from,to,between]=m.hump,A=pts[from],AB=sub(pts[to],A),ab2=dot(AB,AB)||1;
-      let most=-Infinity;
-      for(const i of between){
-        const q=pts[i],t=dot(sub(q,A),AB)/ab2;
-        const line={x:A.x+AB.x*t,y:A.y+AB.y*t,z:A.z+AB.z*t};
-        most=Math.max(most,dot(sub(q,line),ez));
-      }
-      out[m.id]={value:most/face*100,unit:'%'};
+    }else if(m.bridge){
+      // The hump, as the nose-hump control finds it (deform.js): how far the bridge
+      // stands out of the line from its root to its tip at its peak, against the same
+      // on the average face. Zero is an average bridge, negative a scooped one.
+      out[m.id]={value:hump(pts,frame).peak.d*100,unit:'%'};
     }
   }
   return out;
