@@ -13,11 +13,14 @@
 // A few controls change skin texture rather than shape (the non-surgical
 // treatments). Those are not deformers: textureLayers() turns them into masked
 // smoothing passes for the stage.
+import {CANON3} from './facemesh.js?v=6';
 
 // Region controls. Ids are stable: procedures and the fine-tuning panel address them.
 // Shape controls run −100…100 with positive meaning "more"; texture controls 0…100.
 // `depth` marks the ones that move the face towards or away from the camera, which a
-// front-on view hardly shows.
+// front-on view hardly shows. `modifies` marks one that only says where another acts,
+// and moves nothing by itself. Left and right are the patient's: positive moves
+// towards their left (landmark 454).
 export const regions=[
   {id:'nose',name:'بینی'},{id:'lips',name:'لب'},{id:'cheeks',name:'گونه و شقیقه'},
   {id:'jaw',name:'فک و چانه'},{id:'eyes',name:'چشم و ابرو'},{id:'skin',name:'پوست'}
@@ -26,12 +29,18 @@ export const controls=[
   {id:'nose-width',   region:'nose',  name:'پهنای پرهٔ بینی',     help:'باریک یا پهن‌شدن پرهٔ بینی'},
   {id:'nose-bridge',  region:'nose',  name:'پهنای تیغهٔ بینی',    help:'باریک یا پهن‌شدن تیغهٔ بینی'},
   {id:'nose-tip',     region:'nose',  name:'چرخش نوک بینی',       help:'بالا یا پایین‌رفتن نوک بینی'},
+  {id:'nose-tip-side',region:'nose',  name:'نوک بینی به چپ و راست',help:'جابه‌جایی نوک بینی به چپ یا راست، برای نوک کج؛ مثبت به سمت چپ بیمار'},
+  {id:'nose-deviation',region:'nose', name:'کجی تیغهٔ بینی',      help:'چرخیدن کل بینی از ریشه به چپ یا راست، برای بینی کج؛ مثبت به سمت چپ بیمار'},
   {id:'nose-tip-size',region:'nose',  name:'حجم نوک بینی',        help:'ظریف یا گوشتی‌شدن نوک بینی'},
-  {id:'nose-hump',    region:'nose',  name:'قوز بینی',            help:'کم یا بیشتر شدن قوز روی تیغهٔ بینی؛ با چرخاندن سر دیده می‌شود',depth:true},
+  {id:'nose-hump',    region:'nose',  name:'قوز بینی',            help:'کم یا بیشتر شدن قوز، همان‌جا که قوز این بینی است؛ با چرخاندن سر دیده می‌شود',depth:true},
+  {id:'nose-hump-at', region:'nose',  name:'جای قوز',             help:'اگر قوز جای دیگری است، جای اصلاح را روی تیغه بالا یا پایین ببر (صفر: جایی که پیدا شده)',modifies:'nose-hump'},
   {id:'nose-projection',region:'nose',name:'جلوآمدگی نوک بینی',   help:'عقب یا جلو رفتن نوک بینی؛ با چرخاندن سر دیده می‌شود',depth:true},
   {id:'lip-fullness', region:'lips',  name:'حجم کلی لب',          help:'نازک یا پرتر شدن هر دو لب'},
   {id:'lip-upper',    region:'lips',  name:'حجم لب بالا',         help:'نازک یا پرتر شدن لب بالا'},
   {id:'lip-lower',    region:'lips',  name:'حجم لب پایین',        help:'نازک یا پرتر شدن لب پایین'},
+  {id:'lip-center',   region:'lips',  name:'حجم وسط لب',          help:'بلندتر شدن وسط لب‌ها بدون پهن‌شدن گوشه‌ها (مثل لب روسی)'},
+  {id:'lip-bow',      region:'lips',  name:'قوس لب بالا (M)',     help:'مشخص‌تر شدن دو قلهٔ لب بالا و فرورفتگی وسط آن'},
+  {id:'lip-projection',region:'lips', name:'جلوآمدگی لب',         help:'جلوتر یا صاف‌تر شدن نیم‌رخ لب؛ با چرخاندن سر دیده می‌شود',depth:true},
   {id:'lip-width',    region:'lips',  name:'پهنای دهان',          help:'کوچک یا پهن‌شدن دهان'},
   {id:'lip-corners',  region:'lips',  name:'گوشهٔ لب',            help:'پایین یا بالا رفتن گوشه‌های لب'},
   {id:'lip-lift',     region:'lips',  name:'فاصلهٔ بینی تا لب',    help:'کوتاه‌شدن فاصلهٔ زیر بینی تا لب بالا'},
@@ -65,12 +74,18 @@ export const controlLandmarks={
   'nose-width':[1,2],
   'nose-bridge':[168,6],
   'nose-tip':[1],
+  'nose-tip-side':[1,2],
+  'nose-deviation':[197,4],
   'nose-tip-size':[1,4],
-  'nose-hump':[197,195],
+  'nose-hump':[168,6,197,195,5,4],
+  'nose-hump-at':[168,6,197,195,5,4],
   'nose-projection':[1,4],
   'lip-fullness':[0,17],
   'lip-upper':[0,13],
   'lip-lower':[14,17],
+  'lip-center':[0,17],
+  'lip-bow':[37,267,0],
+  'lip-projection':[0,17],
   'lip-width':[13,14],
   'lip-corners':[61,291],
   'lip-lift':[0],
@@ -127,6 +142,56 @@ export function headFrame(P){
   return {ex,ey,ez,face,center:add(middle,ez,-face*.25)};
 }
 
+// The bridge of the nose, from its root to just above the tip, and where a hump is
+// looked for on it (6, 197, 195: the tip's own curve, past 195, is not a hump).
+export const BRIDGE=[168,6,197,195,5,4];
+const SEARCH=[1,2,3];
+// The way out of the bridge: forward, square to the line from its root to its tip.
+function outOf(P,ez){
+  const AB=unit(sub(P[BRIDGE[BRIDGE.length-1]],P[BRIDGE[0]]));
+  return unit(add(ez,AB,-dot(ez,AB)));
+}
+// How far each point of the bridge stands out of the straight line from its root to
+// its tip, as a share of face width.
+function standOut(P,ez,face){
+  const A=P[BRIDGE[0]],AB=sub(P[BRIDGE[BRIDGE.length-1]],A),ab2=dot(AB,AB)||1,n=outOf(P,ez);
+  return BRIDGE.map(i=>{
+    const q=P[i],t=dot(sub(q,A),AB)/ab2;
+    return {t,e:dot(sub(q,add(A,AB,t)),n)/face};
+  });
+}
+// The same on MediaPipe's average face, which every bridge curves like a little.
+let average=null;
+function averageBridge(){
+  if(!average){
+    const C=[];for(let i=0;i<CANON3.length/3;i++)C.push({x:CANON3[i*3],y:CANON3[i*3+1],z:-CANON3[i*3+2]});
+    const {ez,face}=headFrame(C);
+    average=standOut(C,ez,face).map(b=>b.e);
+  }
+  return average;
+}
+// The hump on this nose: how far each point of the bridge stands out against the
+// average bridge (`d`, a share of face width, at `t` from root 0 to tip 1), and the
+// peak. The peak is a soft maximum over the points a hump is looked for at, so it
+// slides between landmarks as the face moves instead of jumping from one to the
+// next; with nothing standing out it settles near 197, where humps usually are.
+const SOFT=.004;
+export function hump(P,frame=headFrame(P)){
+  const avg=averageBridge();
+  const b=standOut(P,frame.ez,frame.face),t=b.map(x=>x.t),d=b.map((x,i)=>x.e-avg[i]);
+  // Along the bridge at `at`: the point on it, and how far it stands out there.
+  const along=at=>{
+    let i=0;while(i<t.length-2&&t[i+1]<at)i++;
+    const f=Math.max(0,Math.min(1,(at-t[i])/((t[i+1]-t[i])||1)));
+    return {point:mix(P[BRIDGE[i]],P[BRIDGE[i+1]],f),d:d[i]+(d[i+1]-d[i])*f};
+  };
+  const top=Math.max(...SEARCH.map(i=>d[i]));
+  let sw=0,st=0;
+  for(const i of SEARCH){const w=Math.exp((d[i]-top)/SOFT);sw+=w;st+=w*t[i];}
+  const peakT=st/sw;
+  return {t,d,peak:{t:peakT,d:along(peakT).d},along,out:outOf(P,frame.ez)};
+}
+
 const AXIS=0, RADIAL=1, SHIFT=2;
 // Through the face, depth counts for half when measuring how far a point is from an
 // anchor: far enough that a nose edit does not reach the cheek behind it in profile,
@@ -155,10 +220,30 @@ export function deformers(P, amounts) {
   axis(mix(p(1),p(2),.5), face*.20, ex, at('nose-width')*.75);
   axis(mix(p(168),p(6),.5), face*.14, ex, at('nose-bridge')*.70);
   shift(p(1), face*.16, up, at('nose-tip')*.60);
+  // Sideways, for a crooked nose: the tip alone, or the whole nose turning about its
+  // root (more at the tip than half way down, nothing at the root).
+  shift(mix(p(1),p(2),.3), face*.12, ex, at('nose-tip-side')*.25);
+  shift(p(197), face*.12, ex, at('nose-deviation')*.10);
+  shift(p(4),   face*.14, ex, at('nose-deviation')*.17);
   radial(mix(p(1),p(4),.5), face*.10, at('nose-tip-size')*.45);
-  // Wide enough to lower the whole bridge, fading out at its root and at the tip, so
-  // a reduced hump reads as a straighter line rather than a dent.
-  shift(mix(p(197),p(195),.5), face*.15, fwd, at('nose-hump')*.22);
+  // The hump, where this nose has it (hump()), or moved along the bridge by
+  // nose-hump-at. Taken off, the bridge there comes back (straight back, so nothing
+  // changes from the front, by enough to come back as far square to the bridge) by as
+  // much as it stands out against the average bridge, and by at least 2% of the
+  // face's width (~3 mm) so the control does something on a bridge that is already
+  // straight; made bigger, it grows by 2.5%. The change fades out before the root and
+  // before the tip (up to 11% of the face's width each way), so it reads as a
+  // straighter line, not a dent, and the root and the tip stay where they are.
+  const humpAmount=at('nose-hump');
+  if(humpAmount){
+    const h=hump(P,{ex,ey,ez,face});
+    const there=h.along(Math.max(.08,Math.min(.85,h.peak.t-at('nose-hump-at')*.3)));
+    const room=Math.min(len(sub(there.point,p(BRIDGE[0]))),len(sub(there.point,p(BRIDGE[BRIDGE.length-1]))));
+    const r=Math.max(face*.05,Math.min(face*.11,room));
+    const size=humpAmount<0?Math.max(there.d,.02):.025;
+    const square=Math.max(.5,dot(h.out,fwd));
+    shift(there.point, r, fwd, humpAmount*size*face/r/square);
+  }
   shift(mix(p(1),p(4),.5), face*.13, fwd, at('nose-projection')*.25);
 
   /* lips: fuller lips also stand a little further forward */
@@ -166,6 +251,13 @@ export function deformers(P, amounts) {
   shift(mix(p(0),p(17),.5), face*.18, fwd, at('lip-fullness')*.10);
   axis(mix(p(0),p(13),.5), face*.13, ey, at('lip-upper')*.65);
   axis(mix(p(14),p(17),.5), face*.14, ey, at('lip-lower')*.65);
+  // Height in the middle of the lips only, the corners left as they are.
+  axis(mix(p(0),p(17),.5), face*.13, ey, at('lip-center')*.60);
+  // The two peaks of the upper lip up, the dip between them a little down: an M.
+  shift(p(37),  face*.045, up, at('lip-bow')*.35);
+  shift(p(267), face*.045, up, at('lip-bow')*.35);
+  shift(p(0),   face*.03,  ey, at('lip-bow')*.15);
+  shift(mix(p(0),p(17),.5), face*.16, fwd, at('lip-projection')*.12);
   axis(mix(p(13),p(14),.5), face*.30, ex, at('lip-width')*.35);
   shift(p(61),  face*.08, up, at('lip-corners')*.30);
   shift(p(291), face*.08, up, at('lip-corners')*.30);

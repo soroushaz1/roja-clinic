@@ -6,13 +6,16 @@
 //
 // It checks that nothing moves at zero; that an edit in depth is invisible from the
 // front and shows as the head turns, and an edit across the face does the opposite;
-// that a nose edit never reaches the cheeks, whatever the angle; that the
-// measurements hardly change with the angle and do register the edits; that the
+// that a nose edit never reaches the cheeks, whatever the angle; that the hump is
+// found where it is and taken off there; that the lip styles are made of real
+// controls; that the measurements hardly change with the angle and do register the
+// edits; that the
 // background follows the face's outline and stays put far from it; and which side of
 // a turned face is marked as facing the camera.
 import assert from 'node:assert/strict';
 import {CANON3} from '../facemesh.js';
-import {points3,headFrame,displacements,controls,zeroAmounts} from '../deform.js';
+import {points3,headFrame,displacements,controls,zeroAmounts,hump} from '../deform.js';
+import {lipStyles,procedures} from '../procedures.js';
 import {createWarp,COLS,ROWS} from '../warp.js';
 import {measure,symmetry,moved,metrics} from '../measure.js';
 
@@ -21,7 +24,9 @@ const rad=d=>d*Math.PI/180;
 // The canonical face turned by `yaw` (positive turns the 454 side away) and `pitch`,
 // as the tracker reports it: x and y as fractions of the frame, z on the scale of x
 // with smaller nearer the camera.
-function face(yaw=0,pitch=0){
+// `bump` pushes one landmark of the bridge forward by that share of the face's width:
+// a hump where the canonical face has none.
+function face(yaw=0,pitch=0,bump=null){
   const out=[];
   const cy=Math.cos(rad(yaw)),sy=Math.sin(rad(yaw)),cp=Math.cos(rad(pitch)),sp=Math.sin(rad(pitch));
   for(let i=0;i<468;i++){
@@ -29,6 +34,10 @@ function face(yaw=0,pitch=0){
     const x1=X*cy+Z*sy, z1=-X*sy+Z*cy;              // yaw, about the vertical
     const y2=Y*cp-z1*sp, z2=Y*sp+z1*cp;             // pitch, about the horizontal
     out.push({x:(W/2+SCALE*x1)/W,y:(H/2+SCALE*y2)/H,z:-SCALE*z2/W});
+  }
+  if(bump){
+    const f=headFrame(points3(out,W,H)),k=bump.size*f.face;
+    const q=out[bump.at];q.x+=f.ez.x*k/W;q.y+=f.ez.y*k/H;q.z+=f.ez.z*k/W;
   }
   return out;
 }
@@ -75,10 +84,45 @@ assert.equal(createWarp().compute(face(30),W,H,zeroAmounts()),null,'zero amounts
 
 /* a nose edit stays on the nose */
 {
-  const nose={'nose-width':-100,'nose-bridge':-100,'nose-tip':100,'nose-tip-size':-100,'nose-hump':-100,'nose-projection':100};
+  const nose={'nose-width':-100,'nose-bridge':-100,'nose-tip':100,'nose-tip-side':100,'nose-deviation':-100,'nose-tip-size':-100,'nose-hump':-100,'nose-projection':100};
   for(const yaw of [0,45,75])for(const i of [50,280,234,454,33,263,152])
     assert(img(move(face(yaw),nose,i))===0,`the nose edits reached landmark ${i} at ${yaw}°`);
   report.local='nose edits leave cheeks, eyes and chin alone at 0°, 45° and 75°';
+}
+
+/* the hump: found where it is, taken off there, and left alone from the front */
+{
+  const P0=points3(face(0),W,H);
+  assert(Math.abs(hump(P0).peak.d)<1e-4,`the average face reads as having a hump of ${(hump(P0).peak.d*100).toFixed(2)}%`);
+  const out={};
+  for(const at of [6,197,195]){
+    const lm=face(0,0,{at,size:.03}),P=points3(lm,W,H),h=hump(P);
+    const t=h.t[[168,6,197,195,5,4].indexOf(at)];
+    assert(Math.abs(h.peak.t-t)<.05,`a hump at ${at} (t ${t.toFixed(2)}) was found at t ${h.peak.t.toFixed(2)}`);
+    assert(h.peak.d>.02,`a 3% hump at ${at} reads as ${(h.peak.d*100).toFixed(2)}%`);
+    // At -100 it comes off; turned, the same.
+    for(const yaw of [0,40]){
+      const Q=points3(face(yaw,0,{at,size:.03}),W,H),d=displacements(Q,amounts({'nose-hump':-100}));
+      const left=hump(Q.map((q,i)=>({x:q.x+d[i*3],y:q.y+d[i*3+1],z:q.z+d[i*3+2]}))).peak.d;
+      assert(left<h.peak.d*.2,`at ${yaw}°, taking off a ${(h.peak.d*100).toFixed(2)}% hump at ${at} left ${(left*100).toFixed(2)}%`);
+      if(!yaw)out[at]=+(left*100).toFixed(2);
+    }
+  }
+  // Moved along the bridge by nose-hump-at: upwards, the bridge moves more above.
+  const P=points3(face(0,0,{at:197,size:.03}),W,H),f=headFrame(P);
+  const back=(set,i)=>{const d=displacements(P,amounts(set));return -(d[i*3]*f.ez.x+d[i*3+1]*f.ez.y+d[i*3+2]*f.ez.z);};
+  assert(back({'nose-hump':-100,'nose-hump-at':100},6)>back({'nose-hump':-100},6)*1.5,'nose-hump-at did not move the correction up the bridge');
+  assert.equal(displacements(P,amounts({'nose-hump-at':100})),null,'nose-hump-at moved something by itself');
+  report.hump={leftAfter:out};
+}
+
+/* the lip styles are made of real lip controls, and are the lip filler's variants */
+{
+  const ids=new Set(controls.filter(c=>c.region==='lips').map(c=>c.id));
+  for(const s of lipStyles)for(const id of Object.keys(s.weights))assert(ids.has(id),`lip style ${s.id} sets ${id}, which is not a lip control`);
+  const variants=procedures.find(p=>p.id==='lip-filler').variants.map(v=>v.id);
+  assert.deepEqual(variants,lipStyles.map(s=>s.id),'the lip filler variants are not the lip styles');
+  report.lipStyles=lipStyles.map(s=>s.id).join(', ');
 }
 
 /* measurements hardly change with the angle, and register the edits */
@@ -130,14 +174,14 @@ assert.equal(createWarp().compute(face(30),W,H,zeroAmounts()),null,'zero amounts
 {
   const P=points3(face(0),W,H),P60=points3(face(60),W,H);
   for(const c of controls){
-    if(c.texture)continue;
+    if(c.texture||c.modifies)continue;
     const d=displacements(P,amounts({[c.id]:100})),d60=displacements(P60,amounts({[c.id]:100}));
     let front=0,side=0;
     for(let i=0;i<468;i++){front=Math.max(front,Math.hypot(d[i*3],d[i*3+1]));side=Math.max(side,Math.hypot(d60[i*3],d60[i*3+1]));}
     if(c.depth)assert(front<side*.03&&side>1,`${c.id}: ${front.toFixed(2)} px from the front, ${side.toFixed(2)} at 60°`);
     else assert(front>1,`${c.id} moves nothing from the front (${front.toFixed(2)} px)`);
   }
-  report.controls=`${controls.filter(c=>!c.texture).length} shape controls, ${controls.filter(c=>c.depth).length} in depth`;
+  report.controls=`${controls.filter(c=>!c.texture&&!c.modifies).length} shape controls, ${controls.filter(c=>c.depth).length} in depth`;
 }
 
 console.log(JSON.stringify(report,null,1));
