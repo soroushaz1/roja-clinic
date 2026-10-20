@@ -285,6 +285,11 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await setSlider(page,'#strength',100);
     await page.waitForTimeout(600);
     assert((await page.locator('#debug-stats').textContent()).includes('WebGL'),'the stats do not name the renderer');
+    // A change of shape is shown on the very frame its landmarks came from, however slow
+    // the tracker (here it is the CPU's, well under the 16 a second live video needs):
+    // on the live video the edit trails a turning head and both noses show.
+    await page.waitForFunction(()=>/فریم و نقاط هم‌زمان/.test(document.querySelector('#debug-stats').textContent),null,{timeout:5000})
+      .catch(async()=>assert.fail(`a shape edit is not shown in step: ${await page.locator('#debug-stats').textContent()}`));
     const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#debug-export').click()]);
     const exported=JSON.parse(fs.readFileSync(await download.path(),'utf8'));
     assert(exported.landmarks&&exported.landmarks.length>=468,'the export has no landmarks');
