@@ -1,20 +1,20 @@
-import {createStage,layerModes} from './stage.js?v=7';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=7';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=7';
-import {renderDebug,nearest} from './debug.js?v=7';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=7';
-import {createWarp,MESH} from './warp.js?v=7';
-import {createRecords} from './records.js?v=7';
-import {createPresenter} from './presenter.js?v=7';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=7';
-import {createMaskPainter,createSmoother} from './masks.js?v=7';
+import {createStage,layerModes} from './stage.js?v=8';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=8';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=8';
+import {renderDebug,nearest} from './debug.js?v=8';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=8';
+import {createWarp,MESH} from './warp.js?v=8';
+import {createRecords} from './records.js?v=8';
+import {createPresenter} from './presenter.js?v=8';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=8';
+import {createMaskPainter,createSmoother} from './masks.js?v=8';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='7';
+const RELEASE='8';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -57,7 +57,9 @@ const viewport=$('viewport');
 
 /* ---------- state ------------------------------------------------------- */
 let source=null;                         // {kind:'camera'|'photo', el, width, height, live, version}
-let landmarks=null, poseAngles=null, blendshapes=null;
+// `landmarks` are smoothed against jitter, for everything that reads the face;
+// `frameMarks` are exactly those of the frame they came from, for placing the warp.
+let landmarks=null, frameMarks=null, poseAngles=null, blendshapes=null;
 let stage=null, stageBroken=false;
 let seam=0.5, seamOn=false, compare=true;
 let frozen=false;
@@ -315,8 +317,9 @@ function draw(now=performance.now()){
   if(overlay.width!==w||overlay.height!==h){overlay.width=w;overlay.height=h;}
   const p=plainOnce?{textures:[],amounts:procedureAmounts(),before:false}:plan();
   const gl=ensureStage();
-  // The warp follows the face, so it is worked out again for every frame drawn.
-  const warp=gl&&landmarks&&p.before?warper.compute(landmarks,w,h,p.amounts):null;
+  // The warp follows the face, so it is worked out again for every frame drawn: placed
+  // on the landmarks of the frame drawn, its amounts worked out on the smoothed ones.
+  const warp=gl&&landmarks&&p.before?warper.compute(frameMarks||landmarks,w,h,p.amounts,landmarks):null;
   if(!gl){
     // The procedures need WebGL; without it the picture is shown as it is.
     $('stage').hidden=true;photo.hidden=source.kind!=='photo';dirty=false;return;
@@ -519,8 +522,18 @@ function dropFrames(){
   shown?.close();shown=null;
 }
 // A WebGL that cannot take the kept frame as a texture turns showing in step off.
+//
+// A change of shape is always shown in step, however slow the tracker: on the live
+// video the landmarks are a tracking round-trip old, and on a turning head that puts
+// the edit beside the nose instead of on it, so both noses show. The picture then
+// moves at the tracker's pace, which is the price of the edit sitting where it should.
 let stepBroken=false;
-const syncing=()=>inStep&&!stepBroken&&!!shown&&performance.now()-shownAt<400;
+const shapeOn=()=>{const a=procedureAmounts();return controls.some(c=>!c.texture&&a[c.id]);};
+const syncing=()=>{
+  if(stepBroken||!shown)return false;
+  const age=performance.now()-shownAt;
+  return inStep?age<400:age<1500&&shapeOn();
+};
 
 // The tracker runs in a worker. Where a worker cannot start MediaPipe (iPhones before
 // iOS 17 have no WebGL inside workers) the same code runs on the page instead: a
@@ -540,6 +553,7 @@ function onTracker(d){
     if(sentGen!==generation||!source){frame?.close();return;}
     perf.detections++;perf.latency=performance.now()-sentAt;perf.inferMs=ema(perf.inferMs,d.ms||0);
     if(frame){shown?.close();shown=frame;shownAt=performance.now();shownVersion++;}
+    frameMarks=d.landmarks||null;
     landmarks=smoother.smooth(d.landmarks,sentAt);
     if(source.kind==='photo')photoPasses++;
     poseAngles=d.landmarks?poseOf(d.matrix):null;
@@ -558,7 +572,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=7${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=8${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -578,7 +592,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=7');
+    await import('./face-core.js?v=8');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -622,7 +636,7 @@ function goLive(){
   $('toolbar').hidden=false;$('stop').disabled=false;
   $('stop').lastChild.textContent=source.kind==='photo'?'بستن عکس':'خاموش‌کردن';
   $('guide').hidden=false;$('badge').hidden=false;
-  landmarks=null;poseAngles=null;photoPasses=0;
+  landmarks=null;frameMarks=null;poseAngles=null;photoPasses=0;
   overlay.width=source.width;overlay.height=source.height;
   enableTools(ready);
   ensureTracker();
@@ -635,7 +649,7 @@ function stop(message='دوربین خاموش شد.'){
   cancelAnimationFrame(raf);
   if(stream)stream.getTracks().forEach(t=>t.stop());
   stream=null;video.srcObject=null;
-  source=null;landmarks=null;poseAngles=null;blendshapes=null;frozen=false;
+  source=null;landmarks=null;frameMarks=null;poseAngles=null;blendshapes=null;frozen=false;
   $('freeze').setAttribute('aria-pressed','false');
   // dispose() loses the WebGL context to free the GPU at once, and a canvas hands a
   // lost context back forever; the next source needs a fresh canvas.
@@ -799,8 +813,14 @@ function grabFrame(){
   if(frameCanvas.width!==w||frameCanvas.height!==h){frameCanvas.width=w;frameCanvas.height=h;}
   const x=frameCanvas.getContext('2d',{willReadFrequently:!window.createImageBitmap});
   x.drawImage(source.el,0,0,w,h);
+  // The copy kept to show in step is the full camera frame where the browser can take
+  // one, so the picture does not drop to the tracker's 640 px.
+  const keep=()=>{
+    try{return createImageBitmap(source.el).catch(()=>createImageBitmap(frameCanvas));}
+    catch{return createImageBitmap(frameCanvas);}
+  };
   if(window.createImageBitmap)return Promise.all([createImageBitmap(frameCanvas),
-    source.kind==='camera'&&!frozen?createImageBitmap(frameCanvas):null]).then(([frame,keep])=>({frame,transfer:[frame],keep}));
+    source.kind==='camera'&&!frozen?keep():null]).then(([frame,keep])=>({frame,transfer:[frame],keep}));
   const frame=x.getImageData(0,0,w,h);
   return Promise.resolve({frame,transfer:[frame.data.buffer]});
 }

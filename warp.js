@@ -19,8 +19,8 @@
 // a hump taken off) would otherwise show the old nose there again; the stage compares
 // these depths with the face as the camera saw it and fills those places from the
 // nearest skin the camera did see.
-import {points3,headFrame,displacements} from './deform.js?v=7';
-import {WARP_TRIANGLES} from './facemesh.js?v=7';
+import {points3,headFrame,displacements} from './deform.js?v=8';
+import {WARP_TRIANGLES} from './facemesh.js?v=8';
 
 export const COLS=64, ROWS=48;           // the background grid
 export const GRID=(COLS+1)*(ROWS+1);
@@ -111,10 +111,18 @@ export function createWarp(){
   return {
     // The warp for these landmarks and amounts, or null when nothing moves. The
     // arrays are reused from frame to frame.
-    compute(landmarks,W,H,amounts){
+    //
+    // `landmarks` must be those of the very frame being drawn: the mesh takes its
+    // texture from where they are, so any lag between them and the picture (a smoothed
+    // copy trailing a turning head) shows the face's own edge beside the edited one.
+    // `shape`, a steadier copy of the same points, is what the edit is worked out
+    // from: each landmark's move, by index, so its jitter does not make the edit
+    // shimmer, while its lag only delays the change by a frame or two.
+    compute(landmarks,W,H,amounts,shape=landmarks){
       last=null;
       if(!landmarks||landmarks.length<MESH)return null;
-      const P=points3(landmarks,W,H),d=displacements(P,amounts);
+      const P=points3(landmarks,W,H);
+      const d=displacements(shape&&shape!==landmarks&&shape.length>=MESH?points3(shape,W,H):P,amounts);
       if(!d)return null;
       const frame=headFrame(P);
       face(P,frame);
