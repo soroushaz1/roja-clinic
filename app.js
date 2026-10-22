@@ -1,21 +1,21 @@
-import {createStage,layerModes} from './stage.js?v=9';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=9';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=9';
-import {renderDebug,nearest} from './debug.js?v=9';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=9';
-import {createWarp,MESH} from './warp.js?v=9';
-import {createRecords} from './records.js?v=9';
-import {createPresenter} from './presenter.js?v=9';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=9';
-import {createMaskPainter,createSmoother} from './masks.js?v=9';
-import {createViewer3d} from './viewer3d.js?v=9';
+import {createStage,layerModes} from './stage.js?v=10';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=10';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=10';
+import {renderDebug,nearest} from './debug.js?v=10';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=10';
+import {createWarp,MESH} from './warp.js?v=10';
+import {createRecords} from './records.js?v=10';
+import {createPresenter} from './presenter.js?v=10';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=10';
+import {createMaskPainter,createSmoother} from './masks.js?v=10';
+import {createViewer3d} from './viewer3d.js?v=10';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='9';
+const RELEASE='10';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -249,7 +249,7 @@ function statusText(){
     return 'از این زاویه بیشتر، تشخیص چهره دقت کمتری دارد.';
   if(frozen)return 'تصویر ثابت است. برای ادامه، دوباره «ثابت» را بزن.';
   if(anyDepth()&&poseAngles&&Math.abs(poseAngles.yaw)<12)
-    return 'این تغییر در نیم‌رخ است: سر را کمی به چپ و راست بچرخان تا دیده شود.';
+    return 'این تغییر در نیم‌رخ است: سر را کمی بچرخان، یا «نمای سه‌بعدی» را بزن تا صورت را از پهلو ببینی.';
   return anyProcedure()?'مرز روی تصویر را بکش تا پیش و پس از عمل را مقایسه کنی.':'یک عمل را از نوار زیر تصویر انتخاب کن.';
 }
 
@@ -579,7 +579,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=9${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=10${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -599,7 +599,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=9');
+    await import('./face-core.js?v=10');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -635,7 +635,7 @@ function shutdown(message){
   stop(message);
 }
 function enableTools(on){
-  for(const id of ['compare','snap','view3d'])$(id).disabled=!on;
+  for(const id of ['compare','snap','view3d','view3d-foot'])$(id).disabled=!on;
   $('freeze').disabled=!on||source?.kind!=='camera';
 }
 function goLive(){
@@ -859,6 +859,12 @@ function toggleFreeze(){
 // The face as a model to turn by hand (viewer3d.js), made from up to three pictures:
 // front-on, then turned each way. The camera's pictures are taken by themselves, each
 // once the head has held still at the right angle for a moment; a photo gives one.
+// Both 3D buttons (on the picture and under it) show whether it is on.
+function show3dOn(on){
+  $('view3d').setAttribute('aria-pressed',String(on));
+  $('view3d-foot').setAttribute('aria-pressed',String(on));
+  $('view3d-foot').lastChild.textContent=on?'بستن سه‌بعدی':'نمای سه‌بعدی';
+}
 function ensureViewer(){
   if(!viewer){
     viewer=createViewer3d($('v3-canvas'));
@@ -886,7 +892,7 @@ function start3d(){
   if(source.kind==='photo'){openViewer([keepView(source.el,frameMarks||landmarks)]);return;}
   if(frozen)toggleFreeze();
   grab={views:[],side:0,last:null,still:0};
-  $('v3-capture').hidden=false;$('view3d').setAttribute('aria-pressed','true');
+  $('v3-capture').hidden=false;show3dOn(true);
   showGrab('');status(statusText());
 }
 function showGrab(now){
@@ -924,11 +930,11 @@ function considerGrab(frame,lm){
 function cancelGrab(){
   if(!grab)return;
   grab=null;$('v3-capture').hidden=true;
-  if(!v3Open){$('view3d').setAttribute('aria-pressed','false');if(source)status(statusText());}
+  if(!v3Open){show3dOn(false);if(source)status(statusText());}
 }
 function openViewer(views){
   v3Views=views;v3Open=true;
-  $('v3').hidden=false;$('view3d').setAttribute('aria-pressed','true');
+  $('v3').hidden=false;show3dOn(true);
   updateSeam();
   viewer.build(views);
   setV3Mode(anyProcedure()?'after':'before');
@@ -939,7 +945,7 @@ function openViewer(views){
 function closeViewer(){
   if(!v3Open)return;
   v3Open=false;v3Views=[];viewer.spin(false);viewer.clear();
-  $('v3').hidden=true;$('view3d').setAttribute('aria-pressed','false');
+  $('v3').hidden=true;show3dOn(false);
   updateSeam();invalidate();
   if(source)status(statusText());
 }
@@ -959,6 +965,7 @@ function v3Picture(mode,mark=false){
   return c;
 }
 $('view3d').onclick=start3d;
+$('view3d-foot').onclick=start3d;
 $('v3-cancel').onclick=cancelGrab;
 $('v3-build').onclick=()=>{if(grab?.views.length){const views=grab.views;cancelGrab();openViewer(views);}};
 $('v3-close').onclick=closeViewer;

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-release="9">
+<html lang="fa" dir="rtl" data-release="10">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -14,7 +14,7 @@
 <link rel="icon" href="favicon.svg">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/Estedad-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="clinic.css?v=9">
+<link rel="stylesheet" href="clinic.css?v=10">
 </head>
 <body>
 
@@ -159,6 +159,7 @@
     <div class="stage-foot">
       <p id="status" role="status" aria-live="polite">برای شروع، دوربین را روشن کن یا یک عکس انتخاب کن.</p>
       <div class="camera-actions">
+        <button id="view3d-foot" class="ghost v3-open" disabled title="نمای سه‌بعدی: صورت را با کشیدن بچرخان (D)"><svg class="ico"><use href="#i-cube"/></svg><span>نمای سه‌بعدی</span></button>
         <button id="stop" class="ghost" disabled><svg class="ico"><use href="#i-power"/></svg>خاموش‌کردن</button>
       </div>
     </div>
@@ -334,6 +335,6 @@
 })();
 </script>
 <script nomodule>document.getElementById('status').textContent='این مرورگر قدیمی است و این برنامه را اجرا نمی‌کند. آخرین نسخهٔ Chrome را نصب کن.';</script>
-<script type="module" src="app.js?v=9"></script>
+<script type="module" src="app.js?v=10"></script>
 </body>
 </html>

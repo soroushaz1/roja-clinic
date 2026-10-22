@@ -427,7 +427,9 @@ select{
   padding:10px 6px;flex-wrap:wrap;
 }
 #status{font-size:13px;color:var(--muted);margin:0;flex:1;min-width:200px}
-.camera-actions{display:flex;gap:8px}
+.camera-actions{display:flex;gap:8px;flex-wrap:wrap}
+.camera-actions .v3-open{border-color:var(--rose);color:var(--text)}
+.camera-actions .v3-open[aria-pressed=true]{background:var(--rose-soft)}
 
 /* ---- the tray ---------------------------------------------------------- */
 .tray{display:flex;align-items:center;gap:10px;padding:12px 2px 0;min-width:0}
