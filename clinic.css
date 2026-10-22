@@ -340,6 +340,50 @@ select{
 .flash.on{animation:flash .35s ease-out}
 @keyframes flash{from{opacity:.55}to{opacity:0}}
 
+/* ---- the 3D view -------------------------------------------------------- */
+.v3{position:absolute;inset:0;z-index:4;background:radial-gradient(ellipse at center,#1F151B,#0C070A 72%)}
+.stage .v3 canvas{pointer-events:auto;touch-action:none;cursor:grab;object-fit:fill}
+.stage .v3 canvas:active{cursor:grabbing}
+.v3-bar{
+  position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:1;
+  display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:6px;padding:6px;max-width:calc(100% - 24px);
+  background:#140C11B3;border:1px solid #FFFFFF14;border-radius:14px;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+}
+.v3-bar .segmented{background:#0C070A99;border-color:#FFFFFF14;flex:none;flex-wrap:nowrap}
+.v3-bar .segmented button{color:#BBA1AD}
+.v3-bar .segmented button[aria-checked=true]{color:#F6ECF1;background:#B83A6A55}
+.v3-bar .ghost{padding:7px 12px;font-size:12.5px;background:#0C070A99;border-color:#FFFFFF1F;color:#E9D6DF}
+.v3-bar .ghost[aria-pressed=true]{border-color:var(--rose);background:#B83A6A33;color:#F6ECF1}
+.v3-hint{position:absolute;top:12px;inset-inline-start:14px;margin:0;font-size:12px;color:#BBA1AD;pointer-events:none;max-width:calc(100% - 100px)}
+.v3-short{display:none}
+/* On a phone the bar is one short row at the bottom, so it leaves the face in view. */
+@media (max-width:900px){
+  .v3-bar{bottom:6px;flex-wrap:nowrap;gap:4px;padding:4px;max-width:calc(100% - 12px);overflow-x:auto;scrollbar-width:none}
+  .v3-bar .segmented{padding:2px;gap:2px}
+  .v3-bar .segmented button,.v3-bar .ghost{padding:5px 8px;font-size:11.5px;white-space:nowrap}
+  .v3-long{display:none}.v3-short{display:inline}
+  .v3-hint{display:none}
+}
+.v3-capture{
+  position:absolute;bottom:14px;inset-inline-start:14px;z-index:6;width:min(320px,calc(100% - 28px));
+  padding:14px 16px;border-radius:14px;color:#F6ECF1;
+  background:#140C11E0;border:1px solid #FFFFFF1F;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+}
+.v3-capture h3{margin:0 0 8px;font-size:15px}
+.v3-steps{margin:0;padding-inline-start:20px;font-size:13.5px;line-height:1.9;color:#BBA1AD}
+.v3-steps li.now{color:#F6ECF1;font-weight:700}
+.v3-steps li.done{color:#7FD8A6}
+.v3-steps li.done::after{content:" ✓"}
+.v3-now{min-height:1.4em;margin:6px 0;font-size:13px;color:#F4E3B0}
+.v3-capture .help{color:#BBA1AD}
+.v3-actions{display:flex;gap:8px;margin-top:8px}
+.v3-actions .primary{padding:8px 16px}
+.v3-actions .ghost{background:#0C070A99;border-color:#FFFFFF1F;color:#E9D6DF}
+@media (max-width:900px){
+  .v3-capture{bottom:8px;inset-inline-start:8px;padding:10px 12px;width:min(300px,calc(100% - 16px))}
+  .v3-capture .help{display:none}
+}
+
 /* The floating tools, glass over the dark around the frame. */
 .toolbar{
   position:absolute;top:12px;inset-inline-end:12px;z-index:5;

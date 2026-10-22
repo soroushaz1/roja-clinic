@@ -306,6 +306,21 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.locator('#gallery-close').click();
     report.snapshot='taken and labelled';
 
+    /* ---- the 3D view from the camera: the front-on picture is taken by itself, and
+       one picture is enough to build from ---- */
+    await page.locator('#view3d').click();
+    assert.equal(await page.locator('#v3-capture').isVisible(),true,'the 3D capture guide did not open');
+    await page.waitForFunction(()=>document.querySelector('#v3-step-front').classList.contains('done'),null,{timeout:20000})
+      .catch(()=>assert.fail('the front-on picture for the 3D view was not taken'));
+    assert.equal(await page.locator('#v3-build').isDisabled(),false,'"build with these" stays disabled after the front picture');
+    await page.locator('#v3-build').click();
+    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:5000});
+    assert.match(await page.locator('#status').textContent(),/سه‌بعدی/,'the status does not speak of the 3D view');
+    assert.equal(await page.locator('#seam').isVisible(),false,'the seam shows over the 3D view');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(()=>document.querySelector('#v3').hidden,null,{timeout:5000});
+    report.view3dCamera='front taken by itself, built from one picture, closed with Escape';
+
     await page.locator('#stop').click();
     assert(await page.evaluate(()=>window.testStream.getTracks().every(t=>t.readyState==='ended')),'camera tracks left running');
 
@@ -317,6 +332,43 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     const photoBase=await page.evaluate(probe,{GX,GY});
     assert(photoBase.diff<1.5,`the photo differs from itself by ${photoBase.diff}`);
     report.photo='face found, procedure applied';
+
+    /* ---- the 3D view from a photo: it turns, before and after differ, and a picture
+       of it can be taken ---- */
+    if(await page.locator('#procedure-reset').isVisible())await page.locator('#procedure-reset').click();
+    await page.locator('[data-procedure="rhinoplasty"]').click();
+    await page.locator('#variant-options [data-variant="fantasy"]').click();await setSlider(page,'#strength',100);
+    await page.locator('#view3d').click();
+    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:5000});
+    await page.waitForTimeout(700);
+    // The model as drawn, small, and how much of it is not the background.
+    const v3=()=>page.evaluate(()=>{const s=document.querySelector('#v3-canvas'),c=document.createElement('canvas');c.width=192;c.height=144;
+      const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(s,0,0,192,144);const d=x.getImageData(0,0,192,144).data;
+      let face=0;for(let i=0;i<d.length;i+=4)if(Math.abs(d[i]-20)+Math.abs(d[i+1]-12)+Math.abs(d[i+2]-17)>40)face++;return {face:face/(192*144),px:[...d]};});
+    // The mean change per pixel, and how many pixels changed clearly (per thousand).
+    const diff=(a,b)=>{let t=0;for(let i=0;i<a.length;i+=4)t+=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);return t/(a.length/4)/3;};
+    const changed3=(a,b)=>{let n=0;for(let i=0;i<a.length;i+=4)if(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2])>45)n++;return n/(a.length/4)*1000;};
+    const front=await v3();
+    assert(front.face>.15,`the 3D view shows almost nothing (${(front.face*100).toFixed(1)}% of it)`);
+    await page.locator('#v3-angle [data-angle="75"]').click();await page.waitForTimeout(700);
+    const profile=await v3();
+    assert(diff(front.px,profile.px)>8,`turning to the profile hardly changed the 3D view (${diff(front.px,profile.px).toFixed(1)})`);
+    await page.locator('#v3-mode [data-mode="before"]').click();await page.waitForTimeout(300);
+    const before3=await v3();
+    // The model is drawn exactly the same each time, so any pixels changed are the
+    // nose: a narrower, lower profile.
+    assert(changed3(profile.px,before3.px)>1,`before and after look the same in profile (${changed3(profile.px,before3.px).toFixed(1)}‰ of pixels changed)`);
+    // Dragging turns it.
+    const vb=await page.locator('#v3-canvas').boundingBox();
+    await page.mouse.move(vb.x+vb.width/2,vb.y+vb.height/2);await page.mouse.down();
+    await page.mouse.move(vb.x+vb.width/2+250,vb.y+vb.height/2,{steps:8});await page.mouse.up();await page.waitForTimeout(200);
+    assert(diff(before3.px,(await v3()).px)>5,'dragging did not turn the 3D view');
+    const shotsBefore=await page.locator('#shots-count').textContent();
+    await page.locator('#snap').click();
+    await page.waitForFunction(b=>document.querySelector('#shots-count').textContent!==b,shotsBefore,{timeout:5000});
+    await page.locator('#v3-close').click();
+    await page.waitForFunction(()=>document.querySelector('#v3').hidden&&!document.querySelector('#stage').hidden,null,{timeout:5000});
+    report.view3d={face:+(front.face*100).toFixed(1),turned:+diff(front.px,profile.px).toFixed(1),beforeAfterPerMille:+changed3(profile.px,before3.px).toFixed(1)};
 
     /* ---- a turned face: the edits in depth show, and stay on the face ---- */
     await page.locator('#procedure-reset').click();

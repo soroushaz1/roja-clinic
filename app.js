@@ -1,20 +1,21 @@
-import {createStage,layerModes} from './stage.js?v=8';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,deformers,displacements,textureLayers} from './deform.js?v=8';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=8';
-import {renderDebug,nearest} from './debug.js?v=8';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=8';
-import {createWarp,MESH} from './warp.js?v=8';
-import {createRecords} from './records.js?v=8';
-import {createPresenter} from './presenter.js?v=8';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=8';
-import {createMaskPainter,createSmoother} from './masks.js?v=8';
+import {createStage,layerModes} from './stage.js?v=9';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=9';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=9';
+import {renderDebug,nearest} from './debug.js?v=9';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=9';
+import {createWarp,MESH} from './warp.js?v=9';
+import {createRecords} from './records.js?v=9';
+import {createPresenter} from './presenter.js?v=9';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=9';
+import {createMaskPainter,createSmoother} from './masks.js?v=9';
+import {createViewer3d} from './viewer3d.js?v=9';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='8';
+const RELEASE='9';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -63,6 +64,9 @@ let landmarks=null, frameMarks=null, poseAngles=null, blendshapes=null;
 let stage=null, stageBroken=false;
 let seam=0.5, seamOn=false, compare=true;
 let frozen=false;
+// The 3D view (see "the 3D view" below): the viewer, whether it is open, the pictures
+// it was made from, and the pictures being taken for it.
+let viewer=null, v3Open=false, v3Pending=false, v3Amounts='', v3Views=[], grab=null;
 let masksDirty=true, dirty=true, debugDirty=true, measureDirty=true;
 const shots=[];
 
@@ -96,7 +100,7 @@ function faceWidthPx(){
   return Math.hypot((landmarks[454].x-landmarks[234].x)*w,(landmarks[454].y-landmarks[234].y)*h);
 }
 function invalidate({masks=false,measure=false}={}){
-  dirty=true;debugDirty=true;
+  dirty=true;debugDirty=true;v3Pending=true;
   if(masks)masksDirty=true;
   if(measure)measureDirty=true;
 }
@@ -172,7 +176,7 @@ function setStrength(id,value){
 /* ---------- the seam ---------------------------------------------------- */
 const seamLabels=()=>['پیش از عمل','پس از عمل'];
 function updateSeam(){
-  seamOn=!!source&&!!stage&&compare&&anyProcedure();
+  seamOn=!!source&&!!stage&&compare&&anyProcedure()&&!v3Open;
   $('seam').hidden=!seamOn;
   if(seamOn){
     const [before,after]=seamLabels();
@@ -233,6 +237,8 @@ function buildTray(){
 
 function statusText(){
   if(!source)return 'برای شروع، دوربین را روشن کن یا یک عکس انتخاب کن.';
+  if(v3Open)return `نمای سه‌بعدی از ${fa.format(v3Views.length)} زاویه: روی صورت بکش تا بچرخد؛ «پیش» و «پس» را مقایسه کن.`;
+  if(grab)return 'برای نمای سه‌بعدی، راهنمای روی تصویر را دنبال کن.';
   if(!landmarks){
     if(source.kind==='photo')return photoPasses>=PHOTO_PASSES?'در این عکس صورتی پیدا نشد. عکسی از روبه‌رو و با نور کافی انتخاب کن.':'در حال پیدا کردن صورت در عکس…';
     return 'صورت را روبه‌روی دوربین نگه دار.';
@@ -555,6 +561,7 @@ function onTracker(d){
     if(frame){shown?.close();shown=frame;shownAt=performance.now();shownVersion++;}
     frameMarks=d.landmarks||null;
     landmarks=smoother.smooth(d.landmarks,sentAt);
+    if(grab&&frame&&d.landmarks)considerGrab(frame,d.landmarks);
     if(source.kind==='photo')photoPasses++;
     poseAngles=d.landmarks?poseOf(d.matrix):null;
     if(d.blendshapes)blendshapes=d.blendshapes;
@@ -572,7 +579,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=8${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=9${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -592,7 +599,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=8');
+    await import('./face-core.js?v=9');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -628,7 +635,7 @@ function shutdown(message){
   stop(message);
 }
 function enableTools(on){
-  for(const id of ['compare','snap'])$(id).disabled=!on;
+  for(const id of ['compare','snap','view3d'])$(id).disabled=!on;
   $('freeze').disabled=!on||source?.kind!=='camera';
 }
 function goLive(){
@@ -645,6 +652,7 @@ function goLive(){
 }
 
 function stop(message='دوربین خاموش شد.'){
+  cancelGrab();closeViewer();
   generation++;activeSource=false;busy=false;watching++;dropFrames();smoother.reset();
   cancelAnimationFrame(raf);
   if(stream)stream.getTracks().forEach(t=>t.stop());
@@ -763,8 +771,16 @@ function frame(now){
   raf=requestAnimationFrame(frame);
   detect(now);
   // In step with the tracker, a frame is drawn when its landmarks arrive (which marks
-  // it dirty), not on every display refresh.
-  if((source.live&&!syncing())||dirty||masksDirty)draw(now);
+  // it dirty), not on every display refresh. Under the 3D view nothing is drawn; the
+  // model follows the controls instead.
+  if(v3Open){
+    if(v3Pending){
+      v3Pending=false;
+      const a=procedureAmounts(),key=JSON.stringify(a);
+      if(key!==v3Amounts){v3Amounts=key;viewer.setAmounts(a);}
+    }
+  }
+  else if((source.live&&!syncing())||dirty||masksDirty)draw(now);
   drawDebug();
   renderMeasure(now);
   updateHud(now);
@@ -839,9 +855,127 @@ function toggleFreeze(){
   status(statusText());
 }
 
+/* ---------- the 3D view -------------------------------------------------- */
+// The face as a model to turn by hand (viewer3d.js), made from up to three pictures:
+// front-on, then turned each way. The camera's pictures are taken by themselves, each
+// once the head has held still at the right angle for a moment; a photo gives one.
+function ensureViewer(){
+  if(!viewer){
+    viewer=createViewer3d($('v3-canvas'));
+    viewer?.on({spin:on=>$('v3-spin').setAttribute('aria-pressed',String(on))});
+  }
+  return viewer;
+}
+// Which way the head faces in a frame's landmarks: yaw across, pitch up and down, in
+// degrees, from the head's own frame (deform.js).
+function facing(lm){
+  const {w,h}=frameSize(),{ez}=headFrame(points3(lm,w,h)),deg=180/Math.PI;
+  return {yaw:Math.atan2(ez.x,-ez.z)*deg,pitch:Math.atan2(ez.y,Math.hypot(ez.x,ez.z))*deg};
+}
+// A frame, copied, with its landmarks: what the model is made from.
+function keepView(frame,lm){
+  const {w,h}=frameSize(),c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(frame,0,0,w,h);
+  return {image:c,landmarks:lm.map(p=>({x:p.x,y:p.y,z:p.z})),width:w,height:h};
+}
+function start3d(){
+  if(!source||!landmarks){toast('اول باید صورت روی تصویر دیده شود.');return;}
+  if(!ensureViewer()){toast('نمای سه‌بعدی روی این مرورگر ساخته نمی‌شود (WebGL).');return;}
+  if(v3Open){closeViewer();return;}
+  if(grab){cancelGrab();return;}
+  if(source.kind==='photo'){openViewer([keepView(source.el,frameMarks||landmarks)]);return;}
+  if(frozen)toggleFreeze();
+  grab={views:[],side:0,last:null,still:0};
+  $('v3-capture').hidden=false;$('view3d').setAttribute('aria-pressed','true');
+  showGrab('');status(statusText());
+}
+function showGrab(now){
+  const n=grab?grab.views.length:0;
+  [['v3-step-front',0],['v3-step-side',1],['v3-step-other',2]].forEach(([id,k])=>{
+    $(id).classList.toggle('done',n>k);$(id).classList.toggle('now',n===k);
+  });
+  $('v3-now').textContent=now;
+  $('v3-build').disabled=n<1;
+}
+// Each tracked frame while taking the pictures: kept when the head has held still
+// (two frames running within 2.5°) at the angle the next step wants.
+function considerGrab(frame,lm){
+  const {yaw,pitch}=facing(lm),turn=Math.abs(yaw);
+  grab.still=grab.last!==null&&Math.abs(yaw-grab.last)<2.5?grab.still+1:0;grab.last=yaw;
+  const n=grab.views.length;
+  let want='',ok=false;
+  if(n===0){
+    ok=turn<7&&Math.abs(pitch)<15;
+    want=ok?'ثابت بمان…':turn>=7?'سر را کمی به طرف دوربین برگردان':'سر را کمی صاف کن';
+  }else{
+    const side=n===2?-grab.side:0;
+    ok=turn>=20&&turn<=45&&(!side||Math.sign(yaw)===side);
+    want=ok?'ثابت بمان…':turn>45?'کمی کمتر بچرخان':side&&turn>=20?'به طرف دیگر بچرخان':'کمی بیشتر بچرخان';
+  }
+  if(ok&&grab.still>=2){
+    if(n===1)grab.side=Math.sign(yaw);
+    grab.views.push(keepView(frame,lm));grab.still=0;
+    $('flash').classList.remove('on');void $('flash').offsetWidth;$('flash').classList.add('on');
+    if(grab.views.length===3){const views=grab.views;cancelGrab();openViewer(views);return;}
+    want='گرفته شد.';
+  }
+  showGrab(want);
+}
+function cancelGrab(){
+  if(!grab)return;
+  grab=null;$('v3-capture').hidden=true;
+  if(!v3Open){$('view3d').setAttribute('aria-pressed','false');if(source)status(statusText());}
+}
+function openViewer(views){
+  v3Views=views;v3Open=true;
+  $('v3').hidden=false;$('view3d').setAttribute('aria-pressed','true');
+  updateSeam();
+  viewer.build(views);
+  setV3Mode(anyProcedure()?'after':'before');
+  const a=procedureAmounts();v3Amounts=JSON.stringify(a);viewer.setAmounts(a);v3Pending=false;
+  viewer.animateTo(0,0);
+  status(statusText());
+}
+function closeViewer(){
+  if(!v3Open)return;
+  v3Open=false;v3Views=[];viewer.spin(false);viewer.clear();
+  $('v3').hidden=true;$('view3d').setAttribute('aria-pressed','false');
+  updateSeam();invalidate();
+  if(source)status(statusText());
+}
+function setV3Mode(mode){
+  for(const b of $('v3-mode').querySelectorAll('button'))b.setAttribute('aria-checked',String(b.dataset.mode===mode));
+  viewer.setMode(mode);
+}
+// A picture of the model as on screen (mirrored, like the live picture), 3:4, with
+// the same "simulation" line as every saved picture.
+function v3Picture(mode,mark=false){
+  const W=900,H=1200,src=viewer.picture(mode,W,H),c=document.createElement('canvas');c.width=W;c.height=H;
+  const x=c.getContext('2d');x.translate(W,0);x.scale(-1,1);x.drawImage(src,0,0);x.setTransform(1,0,0,1,0,0);
+  if(mark){
+    x.font='600 16px Estedad, Tahoma, sans-serif';x.fillStyle='#FFFFFFB0';x.textAlign='right';x.textBaseline='top';x.direction='rtl';
+    x.fillText('شبیه‌سازی تصویری، نه نتیجهٔ قطعی',W-16,14);
+  }
+  return c;
+}
+$('view3d').onclick=start3d;
+$('v3-cancel').onclick=cancelGrab;
+$('v3-build').onclick=()=>{if(grab?.views.length){const views=grab.views;cancelGrab();openViewer(views);}};
+$('v3-close').onclick=closeViewer;
+$('v3-mode').onclick=e=>{const b=e.target.closest('[data-mode]');if(b)setV3Mode(b.dataset.mode);};
+// Three-quarter and profile go to whichever side the model is already turned to.
+$('v3-angle').onclick=e=>{
+  const b=e.target.closest('[data-angle]');if(!b)return;
+  viewer.spin(false);
+  const a=Number(b.dataset.angle),side=viewer.state.yaw<0?-1:1;
+  viewer.animateTo(a*side,0);
+};
+$('v3-spin').onclick=()=>viewer.spin(!viewer.spinning);
+
 // The image as it is now, as a canvas. Null when there is nothing to take.
 function capture(){
   if(!source)return null;
+  if(v3Open)return v3Picture(viewer.state.mode,true);
   const {w,h}=frameSize();
   const c=document.createElement('canvas');c.width=w;c.height=h;
   const x=c.getContext('2d');
@@ -892,13 +1026,14 @@ async function recordShot(label){
   if(!records.patient)return;
   if(!stage||!landmarks){toast('برای پرونده، صورت باید روی تصویر دیده شود.');return;}
   const {w,h}=frameSize(),amounts=procedureAmounts();
-  const P=points3(landmarks,w,h);
+  const P=points3(v3Open?v3Views[0].landmarks:landmarks,w,h);
   const shot={label,box:faceBox(),yaw:poseAngles?.yaw??null,
     plan:{active:[...active].filter(([,v])=>v>0),variants:Object.fromEntries(variants),
       overrides:Object.fromEntries(Object.entries(overrides).filter(([,v])=>v))},
     measures:{before:measure(P),after:measure(moved(P,anyProcedure()?displacements(P,amounts):null))}};
-  const before=stagePicture(true),after=stagePicture(false);
-  draw();
+  if(v3Open){shot.box={x:0,y:0,w:1,h:1};shot.yaw=viewer.state.yaw;shot.label=`${label} · سه‌بعدی`;}
+  const before=v3Open?v3Picture('before'):stagePicture(true),after=v3Open?v3Picture('after'):stagePicture(false);
+  if(!v3Open)draw();
   const [b,a]=await Promise.all([jpeg(before),jpeg(after)]);
   if(!b||!a){toast('ذخیره در پرونده روی این مرورگر ممکن نشد.');return;}
   try{
@@ -1002,12 +1137,17 @@ function presentState(){
     const p=byId(id),{variant}=resolve(p,variants.get(id));
     return `${p.name}${variant?` · ${variant.name}`:''}`;
   });
+  if(v3Open){
+    const c=$('v3-canvas');
+    return {live:true,aspect:c.width/c.height,seam:null,labels:seamLabels(),clinic:clinicName,
+      caption:[viewer.state.mode==='before'?'پیش از عمل':named.join('، ')||(anyProcedure()?'تنظیم دستی':''),'سه‌بعدی'].filter(Boolean).join(' · '),message:''};
+  }
   return {live,aspect:w/h,seam:live&&seamOn?seam:null,labels:seamLabels(),clinic:clinicName,
     caption:named.join('، ')||(anyProcedure()?'تنظیم دستی':''),
     message:source&&!live?'پیش‌نمایش روی این مرورگر ساخته نمی‌شود.':''};
 }
 function presentLoop(){
-  presenter.tick(source&&stage&&!$('stage').hidden?$('stage'):null,presentState());
+  presenter.tick(v3Open?$('v3-canvas'):source&&stage&&!$('stage').hidden?$('stage'):null,presentState());
   const on=String(presenter.open);
   if($('present-open').getAttribute('aria-pressed')!==on)$('present-open').setAttribute('aria-pressed',on);
   requestAnimationFrame(presentLoop);
@@ -1182,9 +1322,11 @@ document.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k==='p'){presenter.toggle();return;}
   if(!source)return;
+  if(e.key==='Escape'&&(v3Open||grab)){cancelGrab();closeViewer();return;}
   if(k==='c')$('compare').click();
   else if(k==='f')toggleFreeze();
   else if(k==='s')snapshot();
+  else if(k==='d')$('view3d').click();
 });
 
 // The seam is positioned in pixels, so it has to be replaced when the box changes.
