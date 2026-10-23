@@ -10,9 +10,9 @@
 // repainting every mask on the CPU each time the face moves.
 //
 // With no layers and no warp the output is a pixel-exact copy of the camera frame.
-import {COLS,ROWS,GRID,MESH} from './warp.js?v=10';
-import {CANON,TRIANGLES,WARP_TRIANGLES} from './facemesh.js?v=10';
-import * as GLSL from './shaders.js?v=10';
+import {COLS,ROWS,GRID,MESH} from './warp.js?v=11';
+import {CANON,TRIANGLES,WARP_TRIANGLES} from './facemesh.js?v=11';
+import * as GLSL from './shaders.js?v=11';
 
 const LANDMARKS=468;
 

@@ -420,6 +420,20 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.waitForFunction(()=>document.querySelector('#procedure-title').textContent==='تزریق ژل لب',null,{timeout:10000});
     report.link='#procedure= opens it';
 
+    // A newer release on the server: an idle page loads it at once, and once only;
+    // after that it offers it with a bar instead of reloading again.
+    {
+      const up=await browser.newPage();
+      await up.route(/[?&]release=\d/,r=>r.fulfill({status:200,contentType:'text/html',body:'<html data-release="999"></html>'}));
+      let loads=0;up.on('load',()=>loads++);
+      await up.goto(origin+'/',{waitUntil:'domcontentloaded'});
+      await up.waitForFunction(()=>!document.querySelector('#update-bar').hidden,null,{timeout:20000})
+        .catch(()=>assert.fail('a newer release on the server was never offered'));
+      assert.equal(loads,2,`an idle page should load a newer release once, then offer it (${loads} loads)`);
+      await up.close();
+      report.update='an idle page loads a newer release once, then offers it';
+    }
+
     /* ---- a narrow screen: the image and the slider share it ---- */
     await page.setViewportSize({width:390,height:844});
     await settle(page);

@@ -1,21 +1,21 @@
-import {createStage,layerModes} from './stage.js?v=10';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=10';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=10';
-import {renderDebug,nearest} from './debug.js?v=10';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=10';
-import {createWarp,MESH} from './warp.js?v=10';
-import {createRecords} from './records.js?v=10';
-import {createPresenter} from './presenter.js?v=10';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=10';
-import {createMaskPainter,createSmoother} from './masks.js?v=10';
-import {createViewer3d} from './viewer3d.js?v=10';
+import {createStage,layerModes} from './stage.js?v=11';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=11';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=11';
+import {renderDebug,nearest} from './debug.js?v=11';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=11';
+import {createWarp,MESH} from './warp.js?v=11';
+import {createRecords} from './records.js?v=11';
+import {createPresenter} from './presenter.js?v=11';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=11';
+import {createMaskPainter,createSmoother} from './masks.js?v=11';
+import {createViewer3d} from './viewer3d.js?v=11';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='10';
+const RELEASE='11';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -579,7 +579,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=10${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=11${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -599,7 +599,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=10');
+    await import('./face-core.js?v=11');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -1341,6 +1341,30 @@ window.addEventListener('resize',()=>{if(seamOn)placeSeam();});
 document.addEventListener('fullscreenchange',()=>{if(seamOn)placeSeam();});
 // The patient's screen goes with this window: a reload opens it again on request.
 window.addEventListener('pagehide',()=>{presenter.close();stop();if(tracker){tracker.close();tracker=null;ready=false;}});
+// A page kept open for days (a phone keeps its tabs without loading them again) asks
+// the server now and then whether a newer release is out: on opening, every ten
+// minutes, and whenever it is looked at again. When one is, it offers to load it, or
+// just loads it when nothing is on the picture yet; once per release, so a server
+// still handing out the old page cannot make it reload over and over.
+let releaseChecked=0;
+async function checkRelease(){
+  const now=Date.now();
+  if(now-releaseChecked<60000)return;
+  releaseChecked=now;
+  try{
+    const response=await fetch(`./?release=${now}`,{cache:'no-store'});
+    const found=(await response.text()).match(/data-release="(\d+)"/);
+    if(!found||Number(found[1])<=Number(RELEASE))return;
+    let tried=null;
+    try{tried=sessionStorage.getItem('clinic-update');sessionStorage.setItem('clinic-update',found[1]);}catch{}
+    if(!source&&tried!==found[1]){location.reload();return;}
+    $('update-bar').hidden=false;
+  }catch{}
+}
+$('update-now').onclick=()=>location.reload();
+setTimeout(checkRelease,3000);
+setInterval(checkRelease,10*60*1000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkRelease();});
 $('start').onclick=start;
 $('photo-input').onchange=()=>{const file=$('photo-input').files[0];$('photo-input').value='';openPhoto(file);};
 $('stop').onclick=()=>stop(source?.kind==='photo'?'عکس بسته شد.':'دوربین خاموش شد.');

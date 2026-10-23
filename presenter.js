@@ -28,7 +28,7 @@ export function createPresenter({toast,onAttach}){
     if(win&&!win.closed){win.focus();return true;}
     release();
     // Opened at once, inside the click: a window opened after waiting is blocked.
-    win=window.open('present.html?v=10',NAME,'popup,width=1280,height=800');
+    win=window.open('present.html?v=11',NAME,'popup,width=1280,height=800');
     if(!win){toast('مرورگر پنجرهٔ تازه را باز نکرد. اجازهٔ «پنجره‌های بازشو» را برای این سایت بده.');return false;}
     placeOnOtherScreen(win);
     toast('نمایشگر بیمار باز شد. آن را به مانیتور بیمار ببر و روی آن بزن تا تمام‌صفحه شود.');

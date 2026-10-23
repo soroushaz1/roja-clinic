@@ -19,8 +19,8 @@
 // a hump taken off) would otherwise show the old nose there again; the stage compares
 // these depths with the face as the camera saw it and fills those places from the
 // nearest skin the camera did see.
-import {points3,headFrame,displacements} from './deform.js?v=10';
-import {WARP_TRIANGLES} from './facemesh.js?v=10';
+import {points3,headFrame,displacements} from './deform.js?v=11';
+import {WARP_TRIANGLES} from './facemesh.js?v=11';
 
 export const COLS=64, ROWS=48;           // the background grid
 export const GRID=(COLS+1)*(ROWS+1);

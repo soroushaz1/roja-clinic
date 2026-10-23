@@ -13,9 +13,9 @@
 // texture of where they were, exactly as on the live picture.
 //
 // It is all drawn on this device, from frames already on screen.
-import {points3,headFrame,displacements} from './deform.js?v=10';
-import {WARP_TRIANGLES} from './facemesh.js?v=10';
-import {PRECISION,SEEN_VERT,SEEN_FRAG} from './shaders.js?v=10';
+import {points3,headFrame,displacements} from './deform.js?v=11';
+import {WARP_TRIANGLES} from './facemesh.js?v=11';
+import {PRECISION,SEEN_VERT,SEEN_FRAG} from './shaders.js?v=11';
 
 const MESH=468, VIEWS=3;
 // The face's outline, in order round it (MediaPipe's face oval).

@@ -26,10 +26,10 @@ const portrait='data:image/png;base64,'+fs.readFileSync(path.join(__dirname,'fac
   const page=await browser.newPage();
   await page.goto(origin,{waitUntil:'domcontentloaded'});
   const png=await page.evaluate(async({portrait,yaw})=>{
-    const {points3,headFrame}=await import('./deform.js?v=10');
-    const {WARP_TRIANGLES}=await import('./facemesh.js?v=10');
+    const {points3,headFrame}=await import('./deform.js?v=11');
+    const {WARP_TRIANGLES}=await import('./facemesh.js?v=11');
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=10');
+    await import('./face-core.js?v=11');
     const core=self.rojaFaceCore(Vision,new URL('./',location.href).href);
     await core.init('CPU');
     // The portrait framed as the test camera frames it.
