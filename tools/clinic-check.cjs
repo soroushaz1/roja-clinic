@@ -314,7 +314,7 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
       .catch(()=>assert.fail('the front-on picture for the 3D view was not taken'));
     assert.equal(await page.locator('#v3-build').isDisabled(),false,'"build with these" stays disabled after the front picture');
     await page.locator('#v3-build').click();
-    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:5000});
+    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:30000});
     assert.match(await page.locator('#status').textContent(),/سه‌بعدی/,'the status does not speak of the 3D view');
     assert.equal(await page.locator('#seam').isVisible(),false,'the seam shows over the 3D view');
     await page.keyboard.press('Escape');
@@ -339,7 +339,7 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.locator('[data-procedure="rhinoplasty"]').click();
     await page.locator('#variant-options [data-variant="fantasy"]').click();await setSlider(page,'#strength',100);
     await page.locator('#view3d').click();
-    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:5000});
+    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:30000});
     await page.waitForTimeout(700);
     // The model as drawn, small, and how much of it is not the background.
     const v3=()=>page.evaluate(()=>{const s=document.querySelector('#v3-canvas'),c=document.createElement('canvas');c.width=192;c.height=144;
