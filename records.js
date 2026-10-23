@@ -2,11 +2,11 @@
 // the doctor's note, the report, and backups. While a patient is open, every
 // snapshot goes into their record for today's visit (app.js hands it over through
 // addShot). The record itself is store.js; the report, report.js and pdf.js.
-import * as store from './store.js?v=10';
-import {buildReport} from './report.js?v=10';
-import {makePdf,jpegPage} from './pdf.js?v=10';
-import {byId,resolve,kinds} from './procedures.js?v=10';
-import {controls} from './deform.js?v=10';
+import * as store from './store.js?v=11';
+import {buildReport} from './report.js?v=11';
+import {makePdf,jpegPage} from './pdf.js?v=11';
+import {byId,resolve,kinds} from './procedures.js?v=11';
+import {controls} from './deform.js?v=11';
 
 const SETTINGS='clinic-settings', OPEN='clinic-patient';
 const SEX={f:'زن',m:'مرد'};

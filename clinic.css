@@ -340,6 +340,14 @@ select{
 .flash.on{animation:flash .35s ease-out}
 @keyframes flash{from{opacity:.55}to{opacity:0}}
 
+/* A newer release than the page: a bar to load it. */
+.update-bar{
+  position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:60;
+  display:flex;align-items:center;gap:12px;padding:8px 8px 8px 16px;max-width:calc(100% - 24px);
+  background:var(--surface);border:1px solid var(--rose);border-radius:999px;box-shadow:var(--shadow);font-size:13.5px;
+}
+.update-bar .primary{padding:7px 16px}
+
 /* ---- the 3D view -------------------------------------------------------- */
 .v3{position:absolute;inset:0;z-index:4;background:radial-gradient(ellipse at center,#1F151B,#0C070A 72%)}
 .stage .v3 canvas{pointer-events:auto;touch-action:none;cursor:grab;object-fit:fill}

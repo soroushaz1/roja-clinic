@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-release="10">
+<html lang="fa" dir="rtl" data-release="11">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -14,7 +14,7 @@
 <link rel="icon" href="favicon.svg">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/Estedad-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="clinic.css?v=10">
+<link rel="stylesheet" href="clinic.css?v=11">
 </head>
 <body>
 
@@ -325,6 +325,10 @@
 </dialog>
 
 <div id="toast" role="status" aria-live="polite"></div>
+<div class="update-bar" id="update-bar" role="status" hidden>
+  <span>نسخهٔ تازه‌ای از برنامه آمده است.</span>
+  <button type="button" class="primary" id="update-now">به‌روزرسانی</button>
+</div>
 
 <!-- If the app cannot start in this browser, say so instead of leaving a dead page. -->
 <script>
@@ -335,6 +339,6 @@
 })();
 </script>
 <script nomodule>document.getElementById('status').textContent='این مرورگر قدیمی است و این برنامه را اجرا نمی‌کند. آخرین نسخهٔ Chrome را نصب کن.';</script>
-<script type="module" src="app.js?v=10"></script>
+<script type="module" src="app.js?v=11"></script>
 </body>
 </html>
