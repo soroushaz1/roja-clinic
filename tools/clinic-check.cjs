@@ -129,6 +129,9 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     assert(ids.length>=16,`expected the full procedure tray, got ${ids.length}`);
     for(const gone of ['#mode-makeup','#shades','#basket','#panel-skin','#brush-toggle'])
       assert.equal(await page.locator(gone).count(),0,`${gone} is still on the page`);
+    // Roja's sections, as one site: makeup and the skin check lead back to Roja.
+    assert.deepEqual(await page.locator('#sections a').evaluateAll(as=>as.map(a=>a.getAttribute('href'))),['../','./','../#skin'],'the section tabs do not lead to Roja');
+    assert.equal(await page.locator('#sections a[aria-current=page]').textContent(),'عمل‌های زیبایی','the procedures tab is not the current one');
 
     await page.locator('#start').click();
     await page.waitForFunction(()=>window.testLandmarks,null,{timeout:90000});
