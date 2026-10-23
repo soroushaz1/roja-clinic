@@ -1,21 +1,21 @@
-import {createStage,layerModes} from './stage.js?v=11';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=11';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=11';
-import {renderDebug,nearest} from './debug.js?v=11';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=11';
-import {createWarp,MESH} from './warp.js?v=11';
-import {createRecords} from './records.js?v=11';
-import {createPresenter} from './presenter.js?v=11';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=11';
-import {createMaskPainter,createSmoother} from './masks.js?v=11';
-import {createViewer3d} from './viewer3d.js?v=11';
+import {createStage,layerModes} from './stage.js?v=12';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=12';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=12';
+import {renderDebug,nearest} from './debug.js?v=12';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=12';
+import {createWarp,MESH} from './warp.js?v=12';
+import {createRecords} from './records.js?v=12';
+import {createPresenter} from './presenter.js?v=12';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=12';
+import {createMaskPainter,createSmoother} from './masks.js?v=12';
+import {createViewer3d} from './viewer3d.js?v=12';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='11';
+const RELEASE='12';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -579,7 +579,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=11${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=12${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -599,7 +599,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=11');
+    await import('./face-core.js?v=12');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -884,6 +884,22 @@ function keepView(frame,lm){
   c.getContext('2d').drawImage(frame,0,0,w,h);
   return {image:c,landmarks:lm.map(p=>({x:p.x,y:p.y,z:p.z})),width:w,height:h};
 }
+// How sharp a kept picture is over the face: the variance of the Laplacian of its
+// brightness, on the face's box at 160 px. Motion blur and a missed focus lower it.
+function sharpness(view){
+  let x0=1,x1=0,y0=1,y1=0;
+  for(const p of view.landmarks){x0=Math.min(x0,p.x);x1=Math.max(x1,p.x);y0=Math.min(y0,p.y);y1=Math.max(y1,p.y);}
+  const S=160,c=document.createElement('canvas');c.width=S;c.height=S;
+  const x=c.getContext('2d',{willReadFrequently:true});
+  x.drawImage(view.image,x0*view.width,y0*view.height,Math.max(1,(x1-x0)*view.width),Math.max(1,(y1-y0)*view.height),0,0,S,S);
+  const d=x.getImageData(0,0,S,S).data,Y=new Float32Array(S*S);
+  for(let i=0;i<S*S;i++)Y[i]=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];
+  let sum=0,sum2=0,n=0;
+  for(let r=1;r<S-1;r++)for(let k=1;k<S-1;k++){
+    const i=r*S+k,l=4*Y[i]-Y[i-1]-Y[i+1]-Y[i-S]-Y[i+S];sum+=l;sum2+=l*l;n++;
+  }
+  return sum2/n-(sum/n)**2;
+}
 function start3d(){
   if(!source||!landmarks){toast('اول باید صورت روی تصویر دیده شود.');return;}
   if(!ensureViewer()){toast('نمای سه‌بعدی روی این مرورگر ساخته نمی‌شود (WebGL).');return;}
@@ -891,7 +907,7 @@ function start3d(){
   if(grab){cancelGrab();return;}
   if(source.kind==='photo'){openViewer([keepView(source.el,frameMarks||landmarks)]);return;}
   if(frozen)toggleFreeze();
-  grab={views:[],side:0,last:null,still:0};
+  grab={views:[],frames:[],side:0,last:null,still:0};
   $('v3-capture').hidden=false;show3dOn(true);
   showGrab('');status(statusText());
 }
@@ -918,9 +934,15 @@ function considerGrab(frame,lm){
     ok=turn>=20&&turn<=45&&(!side||Math.sign(yaw)===side);
     want=ok?'ثابت بمان…':turn>45?'کمی کمتر بچرخان':side&&turn>=20?'به طرف دیگر بچرخان':'کمی بیشتر بچرخان';
   }
+  // Held still at the right angle: three frames running, of which the sharpest is kept.
+  if(!ok)grab.frames=[];
   if(ok&&grab.still>=2){
+    grab.frames.push(keepView(frame,lm));
+    if(grab.frames.length<3){showGrab(want);return;}
+    const kept=grab.frames.map(v=>({v,s:sharpness(v)})).reduce((a,b)=>b.s>a.s?b:a).v;
+    grab.frames=[];
     if(n===1)grab.side=Math.sign(yaw);
-    grab.views.push(keepView(frame,lm));grab.still=0;
+    grab.views.push(kept);grab.still=0;
     $('flash').classList.remove('on');void $('flash').offsetWidth;$('flash').classList.add('on');
     if(grab.views.length===3){const views=grab.views;cancelGrab();openViewer(views);return;}
     want='گرفته شد.';

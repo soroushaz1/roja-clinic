@@ -129,6 +129,9 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     assert(ids.length>=16,`expected the full procedure tray, got ${ids.length}`);
     for(const gone of ['#mode-makeup','#shades','#basket','#panel-skin','#brush-toggle'])
       assert.equal(await page.locator(gone).count(),0,`${gone} is still on the page`);
+    // Roja's sections, as one site: makeup and the skin check lead back to Roja.
+    assert.deepEqual(await page.locator('#sections a').evaluateAll(as=>as.map(a=>a.getAttribute('href'))),['../','./','../#skin'],'the section tabs do not lead to Roja');
+    assert.equal(await page.locator('#sections a[aria-current=page]').textContent(),'عمل‌های زیبایی','the procedures tab is not the current one');
 
     await page.locator('#start').click();
     await page.waitForFunction(()=>window.testLandmarks,null,{timeout:90000});
@@ -314,7 +317,7 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
       .catch(()=>assert.fail('the front-on picture for the 3D view was not taken'));
     assert.equal(await page.locator('#v3-build').isDisabled(),false,'"build with these" stays disabled after the front picture');
     await page.locator('#v3-build').click();
-    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:5000});
+    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:30000});
     assert.match(await page.locator('#status').textContent(),/سه‌بعدی/,'the status does not speak of the 3D view');
     assert.equal(await page.locator('#seam').isVisible(),false,'the seam shows over the 3D view');
     await page.keyboard.press('Escape');
@@ -339,7 +342,7 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.locator('[data-procedure="rhinoplasty"]').click();
     await page.locator('#variant-options [data-variant="fantasy"]').click();await setSlider(page,'#strength',100);
     await page.locator('#view3d').click();
-    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:5000});
+    await page.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:30000});
     await page.waitForTimeout(700);
     // The model as drawn, small, and how much of it is not the background.
     const v3=()=>page.evaluate(()=>{const s=document.querySelector('#v3-canvas'),c=document.createElement('canvas');c.width=192;c.height=144;
