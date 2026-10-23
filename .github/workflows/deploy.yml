@@ -95,6 +95,21 @@ jobs:
             else echo "::error::$1 is served as '${got:-nothing}', not $2"; exit 1; fi
           done
 
+      # What the browser is told about keeping the page, and whether Cloudflare handed
+      # out a copy of its own (cf-cache-status HIT, with its age): a page kept there
+      # would keep phones on an old release while this check, from elsewhere, sees the
+      # new one.
+      - name: How the page is cached
+        if: always()
+        run: |
+          base=https://pythonpath.ir/clinic/
+          for u in "$base" "${base}index.html" "${base}?r=$RANDOM$RANDOM" "${base}app.js"; do
+            echo "== $u"
+            curl -sS -D - -o page.out --max-time 20 "$u" | tr -d '\r' \
+              | grep -iE '^(HTTP/|cache-control|cf-cache-status|age|cdn-cache-control|cloudflare-cdn-cache-control|expires|last-modified|etag|cf-ray|server):' || true
+            grep -o 'data-release="[0-9]*"' page.out || true
+          done
+
       - name: Forget the key
         if: always()
         run: rm -f ~/.ssh/roja_deploy
