@@ -1,21 +1,21 @@
-import {createStage,layerModes} from './stage.js?v=12';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=12';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=12';
-import {renderDebug,nearest} from './debug.js?v=12';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=12';
-import {createWarp,MESH} from './warp.js?v=12';
-import {createRecords} from './records.js?v=12';
-import {createPresenter} from './presenter.js?v=12';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=12';
-import {createMaskPainter,createSmoother} from './masks.js?v=12';
-import {createViewer3d} from './viewer3d.js?v=12';
+import {createStage,layerModes} from './stage.js?v=13';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=13';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=13';
+import {renderDebug,nearest} from './debug.js?v=13';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=13';
+import {createWarp,MESH} from './warp.js?v=13';
+import {createRecords} from './records.js?v=13';
+import {createPresenter} from './presenter.js?v=13';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=13';
+import {createMaskPainter,createSmoother} from './masks.js?v=13';
+import {createViewer3d} from './viewer3d.js?v=13';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='12';
+const RELEASE='13';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -485,6 +485,7 @@ function exportData(){
     measurements:landmarks?{before:measure(points3(landmarks,w,h)),
       after:measure(moved(points3(landmarks,w,h),anyProcedure()?displacements(points3(landmarks,w,h),amounts):null))}:null,
     symmetry:landmarks?symmetry(points3(landmarks,w,h)):null,
+    view3d:v3Open?viewer.info:null,
     procedures:{active:Object.fromEntries(active),variants:Object.fromEntries(variants),amounts:Object.fromEntries(Object.entries(amounts).filter(([,v])=>v))}
   };
 }
@@ -579,7 +580,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=12${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=13${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -599,7 +600,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=12');
+    await import('./face-core.js?v=13');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
@@ -856,9 +857,32 @@ function toggleFreeze(){
 }
 
 /* ---------- the 3D view -------------------------------------------------- */
-// The face as a model to turn by hand (viewer3d.js), made from up to three pictures:
-// front-on, then turned each way. The camera's pictures are taken by themselves, each
-// once the head has held still at the right angle for a moment; a photo gives one.
+// The face as a model to turn by hand (viewer3d.js), made from as many pictures as
+// the camera gives while the head turns slowly: front-on, round to each side and a
+// little up and down. The angles are a grid of cells, 8° across centred on the front,
+// out to 44° each way, in three rows (up, level, down); while the head moves through a cell
+// slowly enough not to blur, with the eyes open and the face as in the front picture,
+// the sharpest frame seen in it is kept, and the sharpest front-on one besides. When the cells the
+// model needs are filled it is made by itself; it can be made sooner from whatever
+// there is. A photo gives one picture.
+// The cells the model needs: level, out to 40° each way; then two up and two down
+// within 16° of the front. The front's own cell is the middle one.
+const SIDE_CELLS=[0,1,2,3,4,6,7,8,9,10].map(c=>11+c), TILT_COLS=[3,4,5,6,7], FRONT_CELL=16;
+// A kept face's longer side, at most, in pixels: a phone has less memory to spare.
+const CROP=matchMedia('(pointer:coarse)').matches?640:1024;
+// Which cell an angle falls in (rows up, level, down), or -1 past the grid.
+function cellOf(yaw,pitch){
+  if(Math.abs(yaw)>=44||Math.abs(pitch)>=27)return -1;
+  return (pitch<-9?0:pitch>9?2:1)*11+Math.round(yaw/8)+5;
+}
+// The grid on the capture guide, mirrored like the picture: a head turned to its own
+// left (yaw > 0) shows on the left.
+const gridCells=Array.from({length:33},(_,i)=>{
+  const row=Math.floor(i/11),col=i%11,c=el('i',{class:'cell'});
+  c.style.gridRow=String(row+1);c.style.gridColumn=String(11-col);
+  if(SIDE_CELLS.includes(i)||i===FRONT_CELL)c.classList.add('need');
+  $('v3-grid').append(c);return c;
+});
 // Both 3D buttons (on the picture and under it) show whether it is on.
 function show3dOn(on){
   $('view3d').setAttribute('aria-pressed',String(on));
@@ -872,26 +896,40 @@ function ensureViewer(){
   }
   return viewer;
 }
-// Which way the head faces in a frame's landmarks: yaw across, pitch up and down, in
-// degrees, from the head's own frame (deform.js).
-function facing(lm){
-  const {w,h}=frameSize(),{ez}=headFrame(points3(lm,w,h)),deg=180/Math.PI;
-  return {yaw:Math.atan2(ez.x,-ez.z)*deg,pitch:Math.atan2(ez.y,Math.hypot(ez.x,ez.z))*deg};
+// How a frame's head lies: yaw across, pitch up and down, in degrees, from the head's
+// own frame (deform.js); and how open the eyes and the mouth are, in 3D so a turned
+// head reads the same (lid to lid over corner to corner, lip to lip over the width).
+function readHead(lm){
+  const {w,h}=frameSize(),P=points3(lm,w,h),{ez}=headFrame(P),deg=180/Math.PI;
+  const d=(a,b)=>Math.hypot(P[a].x-P[b].x,P[a].y-P[b].y,P[a].z-P[b].z);
+  return {yaw:Math.atan2(ez.x,-ez.z)*deg,pitch:Math.atan2(ez.y,Math.hypot(ez.x,ez.z))*deg,
+    eyes:(d(159,145)+d(386,374))/((d(33,133)+d(362,263))||1),mouth:d(13,14)/(d(61,291)||1)};
 }
-// A frame, copied, with its landmarks: what the model is made from.
+// A frame's own size, whatever it is: a VideoFrame, a bitmap, a picture or a canvas.
+const imageSize=im=>[im.displayWidth||im.naturalWidth||im.videoWidth||im.width,im.displayHeight||im.naturalHeight||im.videoHeight||im.height];
+// A frame's face, cut out at the frame's own resolution (CROP px on its longer side at
+// most), with the frame's landmarks: what the model is made from.
 function keepView(frame,lm){
-  const {w,h}=frameSize(),c=document.createElement('canvas');c.width=w;c.height=h;
-  c.getContext('2d').drawImage(frame,0,0,w,h);
-  return {image:c,landmarks:lm.map(p=>({x:p.x,y:p.y,z:p.z})),width:w,height:h};
-}
-// How sharp a kept picture is over the face: the variance of the Laplacian of its
-// brightness, on the face's box at 160 px. Motion blur and a missed focus lower it.
-function sharpness(view){
+  const {w,h}=frameSize(),[fw,fh]=imageSize(frame);
   let x0=1,x1=0,y0=1,y1=0;
-  for(const p of view.landmarks){x0=Math.min(x0,p.x);x1=Math.max(x1,p.x);y0=Math.min(y0,p.y);y1=Math.max(y1,p.y);}
-  const S=160,c=document.createElement('canvas');c.width=S;c.height=S;
-  const x=c.getContext('2d',{willReadFrequently:true});
-  x.drawImage(view.image,x0*view.width,y0*view.height,Math.max(1,(x1-x0)*view.width),Math.max(1,(y1-y0)*view.height),0,0,S,S);
+  for(const p of lm){x0=Math.min(x0,p.x);x1=Math.max(x1,p.x);y0=Math.min(y0,p.y);y1=Math.max(y1,p.y);}
+  const mx=(x1-x0)*.15,my=(y1-y0)*.15;
+  const cx=Math.max(0,Math.floor((x0-mx)*w)),cy=Math.max(0,Math.floor((y0-my)*h));
+  const cw=Math.max(1,Math.min(w,Math.ceil((x1+mx)*w))-cx),ch=Math.max(1,Math.min(h,Math.ceil((y1+my)*h))-cy);
+  const k=Math.min(fw/w,CROP/Math.max(cw,ch)),c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(cw*k));c.height=Math.max(1,Math.round(ch*k));
+  c.getContext('2d').drawImage(frame,cx*fw/w,cy*fh/h,cw*fw/w,ch*fh/h,0,0,c.width,c.height);
+  return {image:c,crop:{x:cx,y:cy,w:cw,h:ch},landmarks:lm.map(p=>({x:p.x,y:p.y,z:p.z})),width:w,height:h};
+}
+// How sharp a frame is over the face: the variance of the Laplacian of its brightness,
+// on the face's box at 160 px. Motion blur and a missed focus lower it.
+const sharpCanvas=el('canvas',{width:160,height:160});
+function sharpness(frame,lm){
+  const [fw,fh]=imageSize(frame);
+  let x0=1,x1=0,y0=1,y1=0;
+  for(const p of lm){x0=Math.min(x0,p.x);x1=Math.max(x1,p.x);y0=Math.min(y0,p.y);y1=Math.max(y1,p.y);}
+  const S=160,x=sharpCanvas.getContext('2d',{willReadFrequently:true});
+  x.drawImage(frame,x0*fw,y0*fh,Math.max(1,(x1-x0)*fw),Math.max(1,(y1-y0)*fh),0,0,S,S);
   const d=x.getImageData(0,0,S,S).data,Y=new Float32Array(S*S);
   for(let i=0;i<S*S;i++)Y[i]=.299*d[i*4]+.587*d[i*4+1]+.114*d[i*4+2];
   let sum=0,sum2=0,n=0;
@@ -907,47 +945,94 @@ function start3d(){
   if(grab){cancelGrab();return;}
   if(source.kind==='photo'){openViewer([keepView(source.el,frameMarks||landmarks)]);return;}
   if(frozen)toggleFreeze();
-  grab={views:[],frames:[],side:0,last:null,still:0};
+  grab={front:null,cells:new Array(33).fill(null),last:null,eyes:0,mouth:0,building:false};
   $('v3-capture').hidden=false;show3dOn(true);
-  showGrab('');status(statusText());
+  showGrab('',null);status(statusText());
 }
-function showGrab(now){
-  const n=grab?grab.views.length:0;
-  [['v3-step-front',0],['v3-step-side',1],['v3-step-other',2]].forEach(([id,k])=>{
-    $(id).classList.toggle('done',n>k);$(id).classList.toggle('now',n===k);
-  });
-  $('v3-now').textContent=now;
-  $('v3-build').disabled=n<1;
+// How far the pictures have got: the front one, each side, up and down.
+function grabProgress(){
+  const got=i=>!!grab.cells[i],count=list=>list.filter(got).length;
+  const left=count([17,18,19,20,21]),right=count([11,12,13,14,15]);
+  const up=count(TILT_COLS),down=count(TILT_COLS.map(c=>22+c));
+  return {front:!!grab.front,left,right,sides:left===5&&right===5,up,down,tilt:up>=2&&down>=2};
 }
-// Each tracked frame while taking the pictures: kept when the head has held still
-// (two frames running within 2.5°) at the angle the next step wants.
+// What to do next, by the step not yet done. A head turned to its own left has yaw > 0;
+// on the mirrored picture it turns to the left too.
+function guidance(p,head){
+  if(!head)return 'روبه‌روی دوربین نگاه کن.';
+  const {yaw,pitch}=head;
+  if(!p.front)return Math.abs(yaw)>=6?'سر را کمی به طرف دوربین برگردان.':Math.abs(pitch)>=15?'سر را صاف کن و روبه‌رو نگاه کن.':'ثابت بمان…';
+  if(!p.sides){
+    if(Math.abs(yaw)>=44)return 'کمی کمتر بچرخان.';
+    return p.left<5&&(p.right===5||yaw>=0)?'سر را آرام به چپ بچرخان.':'سر را آرام به راست بچرخان.';
+  }
+  if(Math.abs(yaw)>20)return 'سر را به روبه‌رو برگردان.';
+  return p.up<2?'حالا سر را کمی بالا ببر.':'حالا سر را کمی پایین بیاور.';
+}
+function showGrab(note,head){
+  const p=grab?grabProgress():{front:false,sides:false,tilt:false};
+  const steps=[['v3-step-front',p.front],['v3-step-side',p.sides],['v3-step-tilt',p.tilt]];
+  const now=steps.findIndex(([,done])=>!done);
+  steps.forEach(([id,done],k)=>{$(id).classList.toggle('done',done);$(id).classList.toggle('now',k===now);});
+  gridCells.forEach((c,i)=>c.classList.toggle('got',!!grab?.cells[i]));
+  const dot=$('v3-dot');dot.hidden=!head;
+  if(head){
+    dot.style.left=`${Math.max(0,Math.min(100,(44-head.yaw)/88*100))}%`;
+    dot.style.top=`${Math.max(0,Math.min(100,(head.pitch+27)/54*100))}%`;
+  }
+  const n=grab?grabViews().length:0;
+  $('v3-count').textContent=n?`${fa.format(n)} زاویه گرفته شد`:'';
+  $('v3-now').textContent=grab?.building?'در حال ساختن مدل سه‌بعدی…':note||(grab?guidance(p,head):'');
+  $('v3-build').disabled=!p.front||!!grab?.building;
+}
+// The pictures kept, the front one first.
+function grabViews(){
+  if(!grab.front)return grab.cells.filter(Boolean).map(c=>c.view);
+  const views=[grab.front.view];
+  for(const c of grab.cells)if(c&&!views.includes(c.view))views.push(c.view);
+  return views;
+}
+// Each tracked frame while taking the pictures. The front picture comes first, and
+// the angles after it are measured from it: a camera above the screen, or a head
+// held a little bowed, makes level read as looking down. The face is held to the front
+// picture too: closed eyes, or a mouth opened wider than in it, are not kept.
 function considerGrab(frame,lm){
-  const {yaw,pitch}=facing(lm),turn=Math.abs(yaw);
-  grab.still=grab.last!==null&&Math.abs(yaw-grab.last)<2.5?grab.still+1:0;grab.last=yaw;
-  const n=grab.views.length;
-  let want='',ok=false;
-  if(n===0){
-    ok=turn<7&&Math.abs(pitch)<15;
-    want=ok?'ثابت بمان…':turn>=7?'سر را کمی به طرف دوربین برگردان':'سر را کمی صاف کن';
-  }else{
-    const side=n===2?-grab.side:0;
-    ok=turn>=20&&turn<=45&&(!side||Math.sign(yaw)===side);
-    want=ok?'ثابت بمان…':turn>45?'کمی کمتر بچرخان':side&&turn>=20?'به طرف دیگر بچرخان':'کمی بیشتر بچرخان';
+  if(grab.building)return;
+  const read=readHead(lm),zero=grab.front?.zero||{yaw:0,pitch:0};
+  const head={...read,yaw:read.yaw-zero.yaw,pitch:read.pitch-zero.pitch};
+  const moving=grab.last&&Math.abs(read.yaw-grab.last.yaw)+Math.abs(read.pitch-grab.last.pitch)>3;
+  grab.last=read;
+  let note='';
+  if(moving)note='آرام‌تر بچرخان تا تصویر تار نشود.';
+  else if(read.eyes<Math.max(.12,grab.eyes*.6))note='چشم‌ها باز بماند.';
+  else if(grab.front&&read.mouth>grab.mouth+.08)note='حالت صورت را مثل اول نگه دار.';
+  else{
+    const front=grab.front?Math.abs(head.yaw)<4&&Math.abs(head.pitch)<4:Math.abs(read.yaw)<6&&Math.abs(read.pitch)<15;
+    const cell=grab.front?cellOf(head.yaw,head.pitch):-1;
+    if(front||cell>=0){
+      const sharp=sharpness(frame,lm),kept=cell>=0?grab.cells[cell]:null;
+      let view=null;
+      if(front&&(!grab.front||sharp>grab.front.sharp)){
+        view=keepView(frame,lm);
+        if(!grab.front){
+          $('flash').classList.remove('on');void $('flash').offsetWidth;$('flash').classList.add('on');
+          grab.front={view,sharp,zero:{yaw:read.yaw,pitch:read.pitch}};grab.eyes=read.eyes;grab.mouth=read.mouth;
+          grab.cells[FRONT_CELL]={view,sharp};             // its own angle, by definition
+        }else grab.front={...grab.front,view,sharp};
+      }
+      if(cell>=0&&(!kept||sharp>kept.sharp))grab.cells[cell]={view:view||keepView(frame,lm),sharp};
+    }
   }
-  // Held still at the right angle: three frames running, of which the sharpest is kept.
-  if(!ok)grab.frames=[];
-  if(ok&&grab.still>=2){
-    grab.frames.push(keepView(frame,lm));
-    if(grab.frames.length<3){showGrab(want);return;}
-    const kept=grab.frames.map(v=>({v,s:sharpness(v)})).reduce((a,b)=>b.s>a.s?b:a).v;
-    grab.frames=[];
-    if(n===1)grab.side=Math.sign(yaw);
-    grab.views.push(kept);grab.still=0;
-    $('flash').classList.remove('on');void $('flash').offsetWidth;$('flash').classList.add('on');
-    if(grab.views.length===3){const views=grab.views;cancelGrab();openViewer(views);return;}
-    want='گرفته شد.';
-  }
-  showGrab(want);
+  showGrab(note,head);
+  const p=grabProgress();
+  if(p.front&&p.sides&&p.tilt)finishGrab();
+}
+// The model made from the pictures kept, after one frame that says so.
+function finishGrab(){
+  if(!grab?.front||grab.building)return;
+  grab.building=true;showGrab('',null);
+  const views=grabViews();
+  requestAnimationFrame(()=>setTimeout(()=>{if(grab?.building){cancelGrab();openViewer(views);}},0));
 }
 function cancelGrab(){
   if(!grab)return;
@@ -955,10 +1040,12 @@ function cancelGrab(){
   if(!v3Open){show3dOn(false);if(source)status(statusText());}
 }
 function openViewer(views){
-  v3Views=views;v3Open=true;
+  v3Open=true;
   $('v3').hidden=false;show3dOn(true);
   updateSeam();
   viewer.build(views);
+  // The faces cut out are in the model's own texture now; only what they were is kept.
+  v3Views=views.map(({landmarks,width,height})=>({landmarks,width,height}));
   setV3Mode(anyProcedure()?'after':'before');
   const a=procedureAmounts();v3Amounts=JSON.stringify(a);viewer.setAmounts(a);v3Pending=false;
   viewer.animateTo(0,0);
@@ -989,7 +1076,7 @@ function v3Picture(mode,mark=false){
 $('view3d').onclick=start3d;
 $('view3d-foot').onclick=start3d;
 $('v3-cancel').onclick=cancelGrab;
-$('v3-build').onclick=()=>{if(grab?.views.length){const views=grab.views;cancelGrab();openViewer(views);}};
+$('v3-build').onclick=finishGrab;
 $('v3-close').onclick=closeViewer;
 $('v3-mode').onclick=e=>{const b=e.target.closest('[data-mode]');if(b)setV3Mode(b.dataset.mode);};
 // Three-quarter and profile go to whichever side the model is already turned to.
@@ -1055,7 +1142,7 @@ async function recordShot(label){
   if(!records.patient)return;
   if(!stage||!landmarks){toast('برای پرونده، صورت باید روی تصویر دیده شود.');return;}
   const {w,h}=frameSize(),amounts=procedureAmounts();
-  const P=points3(v3Open?v3Views[0].landmarks:landmarks,w,h);
+  const P=points3(v3Open?viewer.landmarks:landmarks,w,h);
   const shot={label,box:faceBox(),yaw:poseAngles?.yaw??null,
     plan:{active:[...active].filter(([,v])=>v>0),variants:Object.fromEntries(variants),
       overrides:Object.fromEntries(Object.entries(overrides).filter(([,v])=>v))},

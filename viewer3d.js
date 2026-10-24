@@ -1,30 +1,36 @@
 // The 3D view: the patient's face as a model to turn by hand, from the front round to
 // the profile, before or after.
 //
-// The model is the tracker's own face mesh (468 points with their depth), placed in
-// the head's frame as the front picture has it: the face alone, not the head, with a
-// narrow rim round its edge that fades out so the edge is soft. It is smoothed by two rounds of
-// subdivision that keep every original point where it is (each new point sits on the
-// curved surface the points' normals describe, as in Phong tessellation): an
-// approximating scheme like Catmull–Clark would pull in the tip of the nose and the
-// chin, the very shape being simulated.
+// The model is the tracker's own face mesh (468 points with their depth), solved for
+// over every picture taken rather than read off one (fuse.js), and placed in the
+// head's frame as the front picture has it: the face alone, not the head, with an
+// edge that fades out so it is soft. It is smoothed by two rounds of subdivision that
+// keep every original point where it is (each new point sits on the curved surface
+// the points' normals describe, as in Phong tessellation): an approximating scheme
+// like Catmull–Clark would pull in the tip of the nose and the chin, the very shape
+// being simulated.
 //
-// Its texture comes from up to three pictures: one front-on and one turned each way,
-// each the sharpest of a few frames. Every pixel of the model takes its colour from the
-// picture that saw it most squarely, judged per pixel from the smoothed surface's
-// normal, blending into the next only where one hands over to it, and only where
-// nothing hid that spot from the picture (each picture's own depth map, as on the live
-// view). The turned pictures are brought to the front one's colour first, since the
-// camera's exposure changes as the head turns.
+// Its texture is baked once, when the model is made, into a picture of its own: an
+// atlas, the face unrolled round a vertical axis so the sides keep as much room as the
+// front. Every picture taken adds to each texel of it, weighted by how squarely it saw
+// that spot against the picture that saw it most squarely, and only where nothing hid
+// the spot from it (each picture's own depth map, as on the live view); the pictures
+// are first brought to one colour, since the camera's exposure changes as the head
+// turns. The middle of the face comes from the front picture, and whatever it saw at
+// a slant (the sides of the nose, the cheeks out to the ears, the jaw) from the two or
+// three pictures that faced it, so nothing is stretched out of a picture that saw it
+// edge-on. The atlas is then filled a little past its edges and given mipmaps, so it
+// stays smooth when small and clean at a slant.
 //
 // The edits move the model's points in 3D (deform.js), and the points keep the texture
 // of where they were, exactly as on the live picture. It is all done on this device,
 // from frames already on screen.
-import {points3,headFrame,displacements} from './deform.js?v=12';
-import {WARP_TRIANGLES} from './facemesh.js?v=12';
-import {PRECISION,SEEN_VERT,SEEN_FRAG} from './shaders.js?v=12';
+import {points3,headFrame,displacements} from './deform.js?v=13';
+import {WARP_TRIANGLES} from './facemesh.js?v=13';
+import {PRECISION,SEEN_VERT,SEEN_FRAG} from './shaders.js?v=13';
+import {fuse,apply,place,MESH} from './fuse.js?v=13';
 
-const MESH=468, VIEWS=3, LEVELS=2;
+const LEVELS=2;
 // The face's outline, in order round it (MediaPipe's face oval).
 export const OVAL=[10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,
   152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
@@ -34,47 +40,66 @@ export const OVAL=[10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,37
 // much of the outline's move under an edit it follows.
 const RINGS=[];
 const BASE=MESH+OVAL.length*RINGS.length;
-// How sharply the picture that saw a point most squarely wins over the others.
-const SHARP=25;
+// How sharply the picture that saw a point most squarely wins over the others: one
+// 8° away gives about a third as much, one 16° away almost nothing. And where the
+// front picture keeps the face to itself: wherever it saw the surface within about 35°
+// of square on (handing over until about 55°). It is the sharpest picture, and the
+// one the tracker places best; averaged with pictures from the side, which never
+// line up with it to the pixel, an eye, a nostril or the corner of the mouth would
+// show twice.
+const SHARP=100, FRONT=[.55,.8];
+// The atlas: the share of it left empty round the face, and its size limits.
+const MARGIN=.02, ATLAS_MIN=1024, ATLAS_MAX=2048;
 // The limits of turning, in degrees. Past ~80° the model is mostly what no picture saw.
 export const LIMITS={yaw:80,pitch:30};
 
-const VERT=`attribute vec3 a_pos;attribute vec2 a_uv0;attribute vec2 a_uv1;attribute vec2 a_uv2;
-attribute vec3 a_dep;attribute vec3 a_n;attribute vec2 a_edge;uniform mat4 u_mvp;
-varying vec2 v_uv0;varying vec2 v_uv1;varying vec2 v_uv2;varying vec3 v_dep;varying vec3 v_n;varying vec2 v_edge;
-void main(){v_uv0=a_uv0;v_uv1=a_uv1;v_uv2=a_uv2;v_dep=a_dep*.5+.5;v_n=a_n;v_edge=a_edge;gl_Position=u_mvp*vec4(a_pos,1.);}`;
-// Per pixel: how squarely each picture saw this spot (the surface's normal against the
-// way to that camera), if it saw it at all (inside its frame, nothing nearer in its
-// depth map). Where none did, the front picture still gives the colour. v_edge: x how
-// much shows (the rim fades out), y how near the face's edge this is.
-const FRAG=`uniform sampler2D u_img0;uniform sampler2D u_img1;uniform sampler2D u_img2;
-uniform sampler2D u_seen0;uniform sampler2D u_seen1;uniform sampler2D u_seen2;
-uniform vec3 u_to0;uniform vec3 u_to1;uniform vec3 u_to2;uniform vec3 u_gain1;uniform vec3 u_gain2;uniform vec3 u_has;uniform float u_tol;
-varying vec2 v_uv0;varying vec2 v_uv1;varying vec2 v_uv2;varying vec3 v_dep;varying vec3 v_n;varying vec2 v_edge;
+// The model on screen: its colour from the atlas, and how much of each point shows
+// (v_a: the face's edge fades out, and near it what no picture saw squarely).
+const VERT=`attribute vec3 a_pos;attribute vec2 a_t;attribute float a_a;uniform mat4 u_mvp;
+varying vec2 v_t;varying float v_a;
+void main(){v_t=a_t;v_a=a_a;gl_Position=u_mvp*vec4(a_pos,1.);}`;
+const FRAG=`uniform sampler2D u_atlas;varying vec2 v_t;varying float v_a;
+void main(){if(v_a<.02)discard;gl_FragColor=vec4(texture2D(u_atlas,v_t).rgb,v_a);}`;
+// Baking, one picture at a time, drawn into the atlas: each texel adds that picture's
+// colour times its weight (per point, see weigh()) where the picture saw it, inside
+// its frame with nothing nearer in its depth map, and the weight itself.
+const ADD_VERT=`attribute vec2 a_t;attribute vec2 a_uv;attribute float a_dep;attribute float a_w;
+varying vec2 v_uv;varying float v_dep;varying float v_w;
+void main(){v_uv=a_uv;v_dep=a_dep*.5+.5;v_w=a_w;gl_Position=vec4(a_t*2.-1.,0.,1.);}`;
+const ADD_FRAG=`uniform sampler2D u_img;uniform sampler2D u_seen;uniform vec3 u_gain;uniform float u_tol;
+varying vec2 v_uv;varying float v_dep;varying float v_w;
 float inside(vec2 uv){return step(0.,uv.x)*step(uv.x,1.)*step(0.,uv.y)*step(uv.y,1.);}
-float depth(vec4 d){return d.r+d.g/255.;}
 void main(){
-  if(v_edge.x<.02)discard;
-  vec3 n=normalize(v_n);
-  vec3 c=vec3(dot(n,u_to0),dot(n,u_to1),dot(n,u_to2))*u_has-(1.-u_has)*2.;
-  float top=max(c.x,max(c.y,c.z));
-  vec3 w=exp(${SHARP}.*(c-top))*step(.05,c)*u_has;
-  w*=vec3(inside(v_uv0),inside(v_uv1),inside(v_uv2));
-  w*=step(v_dep-u_tol,vec3(depth(texture2D(u_seen0,v_uv0)),depth(texture2D(u_seen1,v_uv1)),depth(texture2D(u_seen2,v_uv2))));
-  float sum=w.x+w.y+w.z;
-  vec3 c0=texture2D(u_img0,v_uv0).rgb,col=c0;
-  if(sum>1e-5)col=(c0*w.x+texture2D(u_img1,v_uv1).rgb*u_gain1*w.y+texture2D(u_img2,v_uv2).rgb*u_gain2*w.z)/sum;
-  // Near the edge, faded where no picture saw it squarely enough to give it more than a
-  // stretched smear (the side of the face by the ear and down the jaw, with only a front
-  // picture). Never inside the face: under the nose and between the lips no picture
-  // sees squarely either.
-  float a=v_edge.x*mix(1.,smoothstep(.2,.5,top),v_edge.y);
-  if(a<.02)discard;
-  gl_FragColor=vec4(col,a);
+  vec4 d=texture2D(u_seen,v_uv);
+  float w=v_w*inside(v_uv)*step(v_dep-u_tol,d.r+d.g/255.);
+  if(w<=0.)discard;
+  gl_FragColor=vec4(min(texture2D(u_img,v_uv).rgb*u_gain,1.)*w,w);
+}`;
+// Then each texel's sum over its weight. Where the pictures that should have given it
+// most did not see it after all, the front picture as it is: under the nose and the
+// chin, where no picture looks, and under the tip of the nose, where the tracker's
+// mesh folds over in the front picture and its depth map hides what the picture shows.
+const RESOLVE_VERT=`attribute vec2 a_t;attribute vec2 a_uv;varying vec2 v_uv;
+void main(){v_uv=a_uv;gl_Position=vec4(a_t*2.-1.,0.,1.);}`;
+const RESOLVE_FRAG=`uniform sampler2D u_sum;uniform sampler2D u_img;uniform float u_size;varying vec2 v_uv;
+void main(){
+  vec4 s=texture2D(u_sum,gl_FragCoord.xy/u_size);
+  vec3 front=texture2D(u_img,v_uv).rgb,col=s.a>1e-4?s.rgb/s.a:front;
+  gl_FragColor=vec4(mix(front,col,smoothstep(.3,.85,s.a)),1.);
+}`;
+// And filled past the face's edge: an empty texel takes the mean of the filled ones
+// round it, u_step texels away, so filtering and mipmaps never bring in the black
+// around the face.
+const FILL_VERT=`attribute vec2 a_q;varying vec2 v_t;void main(){v_t=a_q*.5+.5;gl_Position=vec4(a_q,0.,1.);}`;
+const FILL_FRAG=`uniform sampler2D u_src;uniform float u_step;varying vec2 v_t;
+void main(){
+  vec4 c=texture2D(u_src,v_t);
+  if(c.a>.5){gl_FragColor=c;return;}
+  vec4 s=vec4(0.);
+  for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec4 n=texture2D(u_src,v_t+vec2(float(x),float(y))*u_step);s+=vec4(n.rgb*n.a,n.a);}
+  gl_FragColor=s.a>0.?vec4(s.rgb/s.a,1.):vec4(0.);
 }`;
 
-const sub=(a,b)=>({x:a.x-b.x,y:a.y-b.y,z:a.z-b.z});
-const dot=(a,b)=>a.x*b.x+a.y*b.y+a.z*b.z;
 const unit=v=>{const l=Math.hypot(v.x,v.y,v.z)||1;return {x:v.x/l,y:v.y/l,z:v.z/l};};
 
 // The triangles: the face mesh, then the skirt, ring by ring from the outline out.
@@ -163,6 +188,23 @@ function subdivide(pos,nrm,each){
   }
   normals(pos,TRIANGLES,COUNT,nrm);
 }
+// The face unrolled for the atlas: across, the angle round a vertical axis through
+// the middle of the head times the face's mean distance from that axis; down, as it
+// is. So the sides, which turn away from the front, keep about the room the front has.
+// Into [0,1]² with a margin, the same scale both ways; `span` is the longer side in
+// face widths.
+function unroll(pos,out){
+  let r=0;for(let i=0;i<MESH;i++)r+=Math.hypot(pos[i*3],pos[i*3+2])/MESH;
+  let x0=Infinity,x1=-Infinity,y0=Infinity,y1=-Infinity;
+  for(let i=0;i<COUNT;i++){
+    const u=Math.atan2(pos[i*3],pos[i*3+2])*r,v=pos[i*3+1];
+    out[i*2]=u;out[i*2+1]=v;x0=Math.min(x0,u);x1=Math.max(x1,u);y0=Math.min(y0,v);y1=Math.max(y1,v);
+  }
+  const span=Math.max(x1-x0,y1-y0)||1,k=(1-2*MARGIN)/span;
+  const ox=(1-(x1-x0)*k)/2,oy=(1-(y1-y0)*k)/2;
+  for(let i=0;i<COUNT;i++){out[i*2]=ox+(out[i*2]-x0)*k;out[i*2+1]=oy+(out[i*2+1]-y0)*k;}
+  return span;
+}
 
 // Column-major 4×4 matrices, as WebGL takes them.
 function perspective(fov,aspect,near,far){
@@ -192,29 +234,44 @@ export function createViewer3d(canvas){
   let gl;
   try{gl=canvas.getContext('webgl',options)||canvas.getContext('experimental-webgl',options);}catch{return null;}
   if(!gl)return null;
-  let main,seen;
+  let main,seen,add,resolve,fill;
   try{
     const compile=(type,src)=>{const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
       if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;};
     const link=(v,f)=>{const p=gl.createProgram();gl.attachShader(p,compile(gl.VERTEX_SHADER,v));gl.attachShader(p,compile(gl.FRAGMENT_SHADER,PRECISION+f));
       gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
       const a=n=>gl.getAttribLocation(p,n),u=n=>gl.getUniformLocation(p,n);return {p,a,u};};
-    main=link(VERT,FRAG);seen=link(SEEN_VERT,SEEN_FRAG);
+    main=link(VERT,FRAG);seen=link(SEEN_VERT,SEEN_FRAG);add=link(ADD_VERT,ADD_FRAG);
+    resolve=link(RESOLVE_VERT,RESOLVE_FRAG);fill=link(FILL_VERT,FILL_FRAG);
   }catch{return null;}
 
   const buffer=(data,target=gl.ARRAY_BUFFER)=>{const b=gl.createBuffer();gl.bindBuffer(target,b);gl.bufferData(target,data,gl.STATIC_DRAW);return b;};
   const index=buffer(TRIANGLES,gl.ELEMENT_ARRAY_BUFFER);
   const before=new Float32Array(COUNT*3), after=new Float32Array(COUNT*3), nrm=new Float32Array(COUNT*3), scratch=new Float32Array(COUNT*3);
-  const uvs=[0,1,2].map(()=>new Float32Array(COUNT*2)), deps=new Float32Array(COUNT*3);
-  const viewDep=[0,1,2].map(()=>new Float32Array(COUNT));
-  const edge=new Float32Array(COUNT*2);
-  const buf={before:buffer(before),after:buffer(after),n:buffer(nrm),uv:uvs.map(u=>buffer(u)),dep:buffer(deps),edge:buffer(edge),
-    viewDep:viewDep.map(d=>buffer(d))};
+  const off=new Float32Array(COUNT*3), edge=new Float32Array(COUNT*2), atlasAt=new Float32Array(COUNT*2), shows=new Float32Array(COUNT);
+  // The atlas and what shows are the model's; uv, dep and w are one picture's at a
+  // time, while baking.
+  const buf={before:buffer(before),after:buffer(after),t:buffer(atlasAt),a:buffer(shows),
+    uv:buffer(new Float32Array(COUNT*2)),dep:buffer(new Float32Array(COUNT)),w:buffer(new Float32Array(COUNT)),
+    quad:buffer(new Float32Array([-1,-1,1,-1,-1,1,1,1]))};
   const texture=(filter=gl.LINEAR)=>{const t=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,t);
     for(const [k,v] of [[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE],[gl.TEXTURE_MIN_FILTER,filter],[gl.TEXTURE_MAG_FILTER,filter]])gl.texParameteri(gl.TEXTURE_2D,k,v);
     gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));return t;};
-  const images=[0,1,2].map(()=>texture());
-  const seens=[0,1,2].map(()=>({tex:texture(gl.NEAREST),fbo:gl.createFramebuffer(),rb:gl.createRenderbuffer(),w:1,h:1}));
+  const picture=texture();
+  const seenMap={tex:texture(gl.NEAREST),fbo:gl.createFramebuffer(),rb:gl.createRenderbuffer(),w:0,h:0};
+  const fbo=gl.createFramebuffer();
+  let atlas=texture();
+  const anisotropy=gl.getExtension('EXT_texture_filter_anisotropic')||gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic');
+  const sumTypes=(()=>{
+    // What the sums are kept in while baking: half floats or floats where the GPU can
+    // draw into them and blend them, else bytes, which are enough, as the weights at a
+    // point add up to one.
+    const out=[],half=gl.getExtension('OES_texture_half_float');
+    if(half&&gl.getExtension('EXT_color_buffer_half_float'))out.push(half.HALF_FLOAT_OES);
+    if(gl.getExtension('OES_texture_float')&&gl.getExtension('WEBGL_color_buffer_float')&&gl.getExtension('EXT_float_blend'))out.push(gl.FLOAT);
+    out.push(gl.UNSIGNED_BYTE);
+    return out;
+  })();
 
   let model=null;            // what build() worked out from the pictures
   let state={mode:'after',yaw:0,pitch:0};
@@ -222,14 +279,21 @@ export function createViewer3d(canvas){
 
   function set(buffer,data){gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW);}
   function attrib(loc,buffer,size){if(loc<0)return;gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,size,gl.FLOAT,false,0,0);}
+  function detach(){for(let k=0;k<8;k++)gl.disableVertexAttribArray(k);}
 
-  // From the pictures: views[0] front-on, then up to two turned ones; each
-  // {image (a canvas), landmarks (as the tracker gives them), width, height}.
+  // From the pictures: views[0] front-on, then any number at other angles; each
+  // {image (a canvas: the face cut out of the frame), crop {x,y,w,h} (where the image
+  // was in the frame, in its pixels), landmarks (as the tracker gives them for the
+  // whole frame), width, height (the frame's)}.
   function build(views){
-    views=views.slice(0,VIEWS);
-    const frames=views.map(v=>{const P=points3(v.landmarks,v.width,v.height);return {P,f:headFrame(P),v};});
-    const {P,f}=frames[0];
-    const toLocal=p=>{const d=sub(p,f.center);return {x:dot(d,f.ex)/f.face,y:dot(d,f.ey)/f.face,z:dot(d,f.ez)/f.face};};
+    const Ps=views.map(v=>points3(v.landmarks,v.width,v.height));
+    const {X,poses}=fuse(Ps);
+    // The shape, in the front picture's frame, with that picture's irises (no part of
+    // the mesh).
+    const P=X.concat(Ps[0].slice(MESH));
+    const f=headFrame(P);
+    const toLocal=p=>{const d={x:p.x-f.center.x,y:p.y-f.center.y,z:p.z-f.center.z};
+      return {x:(d.x*f.ex.x+d.y*f.ex.y+d.z*f.ex.z)/f.face,y:(d.x*f.ey.x+d.y*f.ey.y+d.z*f.ey.z)/f.face,z:(d.x*f.ez.x+d.y*f.ez.y+d.z*f.ez.z)/f.face};};
     const L=new Array(BASE);
     for(let i=0;i<MESH;i++)L[i]=toLocal(P[i]);
     // The rim. The head round the face is taken as an ellipsoid as wide as the outline,
@@ -254,99 +318,232 @@ export function createViewer3d(canvas){
       L[MESH+k*n+j]={x:round.x+(down.x-round.x)*m,y:round.y+(down.y-round.y)*m,z:round.z+(down.z-round.z)*m};
     }));
     for(let i=0;i<BASE;i++){before[i*3]=L[i].x;before[i*3+1]=L[i].y;before[i*3+2]=L[i].z;}
-    const base=i=>i<MESH?i:OVAL[(i-MESH)%n];
-    // Each picture's view of the base points: where they are in it, and how deep.
-    frames.forEach(({P:Pv,f:fv,v},s)=>{
-      for(let i=0;i<BASE;i++){
-        const b=base(i),q=L[i],o=L[b],pb=Pv[b];
-        // The landmark itself, or the skirt carried by its outline point.
-        const off={x:q.x-o.x,y:q.y-o.y,z:q.z-o.z};
-        const p=i<MESH?pb:{x:pb.x+fv.face*(off.x*fv.ex.x+off.y*fv.ey.x+off.z*fv.ez.x),
-          y:pb.y+fv.face*(off.x*fv.ex.y+off.y*fv.ey.y+off.z*fv.ez.y),z:pb.z+fv.face*(off.x*fv.ex.z+off.y*fv.ey.z+off.z*fv.ez.z)};
-        uvs[s][i*2]=p.x/v.width;uvs[s][i*2+1]=p.y/v.height;
-        deps[i*3+s]=Math.max(-.99,Math.min(.99,(p.z-fv.center.z)/(fv.face*2)));
-      }
-    });
     for(let i=0;i<BASE;i++){edge[i*2]=i<MESH?EDGE[i].show:0;edge[i*2+1]=i<MESH?EDGE[i].near:1;}
-    // Subdivided: each new point's place in each picture is its edge's midpoint there,
-    // moved by how far the curved surface stands off that edge, as that picture sees it.
+    // Subdivided, keeping how far each new point stands off its edge, to place it in
+    // each picture.
     subdivide(before,nrm,(i,a,b,ox,oy,oz)=>{
-      frames.forEach(({f:fv,v},s)=>{
-        const k=fv.face;
-        uvs[s][i*2]=(uvs[s][a*2]+uvs[s][b*2])/2+k*(ox*fv.ex.x+oy*fv.ey.x+oz*fv.ez.x)/v.width;
-        uvs[s][i*2+1]=(uvs[s][a*2+1]+uvs[s][b*2+1])/2+k*(ox*fv.ex.y+oy*fv.ey.y+oz*fv.ez.y)/v.height;
-        deps[i*3+s]=Math.max(-.99,Math.min(.99,(deps[a*3+s]+deps[b*3+s])/2+(ox*fv.ex.z+oy*fv.ey.z+oz*fv.ez.z)/2));
-      });
+      off[i*3]=ox;off[i*3+1]=oy;off[i*3+2]=oz;
       edge[i*2]=(edge[a*2]+edge[b*2])/2;edge[i*2+1]=(edge[a*2+1]+edge[b*2+1])/2;
     });
-    for(let s=frames.length;s<VIEWS;s++){uvs[s].fill(-1);for(let i=0;i<COUNT;i++)deps[i*3+s]=0;}
-    for(let s=0;s<VIEWS;s++)for(let i=0;i<COUNT;i++)viewDep[s][i]=deps[i*3+s];
-    // Towards each camera, in the head's frame: image z grows away from the camera.
-    const toward=frames.map(({f:fv})=>unit({x:-fv.ex.z,y:-fv.ey.z,z:-fv.ez.z}));
-    frames.forEach(({v},s)=>{gl.bindTexture(gl.TEXTURE_2D,images[s]);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,v.image);});
-    uvs.forEach((u,s)=>set(buf.uv[s],u));viewDep.forEach((d,s)=>set(buf.viewDep[s],d));
-    set(buf.dep,deps);set(buf.edge,edge);set(buf.before,before);set(buf.n,nrm);
+    const span=unroll(before,atlasAt);
+    const base=i=>i<MESH?i:OVAL[(i-MESH)%n];
+    const seenBy=views.map((v,s)=>project(v,Ps[s],poses[s],f,L,base));
+    const W=weigh(seenBy);
+    set(buf.t,atlasAt);set(buf.a,shows);set(buf.before,before);
+    // About three texels for every pixel of the front picture's face: drawn from the
+    // pictures into the atlas and from the atlas onto the screen, the face is
+    // resampled twice, and with fewer texels the second one shows as a blur.
+    const v0=views[0],perFace=poses[0].s*f.face*v0.image.width/v0.crop.w;
+    const limit=Math.min(ATLAS_MAX,gl.getParameter(gl.MAX_TEXTURE_SIZE),gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+    let size=ATLAS_MIN;while(size<limit&&size<perFace*3*span/(1-2*MARGIN))size*=2;
+    const gains=colourGains(views,seenBy,W);
+    const sums=bake(views,seenBy,W,gains,Math.min(size,limit));
     // The face turns about its own middle, and is framed to the ball round it.
     let lo={x:Infinity,y:Infinity,z:Infinity},hi={x:-Infinity,y:-Infinity,z:-Infinity};
     for(let i=0;i<MESH;i++){const q=L[i];lo={x:Math.min(lo.x,q.x),y:Math.min(lo.y,q.y),z:Math.min(lo.z,q.z)};hi={x:Math.max(hi.x,q.x),y:Math.max(hi.y,q.y),z:Math.max(hi.z,q.z)};}
     const pivot={x:(lo.x+hi.x)/2,y:(lo.y+hi.y)/2,z:(lo.z+hi.z)/2};
     let radius=0;for(let i=0;i<COUNT;i++)radius=Math.max(radius,Math.hypot(before[i*3]-pivot.x,before[i*3+1]-pivot.y,before[i*3+2]-pivot.z));
-    model={P,f,L,n,views:frames.length,size:frames.map(({v})=>[v.width,v.height]),toward,gains:colourGains(frames,toward),pivot,radius};
-    frames.forEach((_,s)=>drawSeen(s));
+    model={P,f,L,n,views:views.length,pivot,radius,gains,size:Math.min(size,limit),sums,
+      landmarks:P.map(q=>({x:q.x/v0.width,y:q.y/v0.height,z:q.z/v0.width}))};
     after.set(before);set(buf.after,after);
     ready=true;
     draw();
   }
 
-  // Each turned picture's colour against the front one's: per channel, the ratio of the
-  // two over the points both saw squarely. Clamped, so a bad match does little harm.
-  function colourGains(frames,toward){
-    const gains=[[1,1,1],[1,1,1],[1,1,1]];
-    if(frames.length<2)return gains;
-    const pixels=frames.map(({v})=>{
-      const c=document.createElement('canvas'),k=Math.min(1,640/v.width);c.width=Math.round(v.width*k);c.height=Math.round(v.height*k);
-      const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v.image,0,0,c.width,c.height);
-      return {d:x.getImageData(0,0,c.width,c.height).data,w:c.width,h:c.height};
-    });
-    const sample=(s,i)=>{
-      const {d,w,h}=pixels[s],u=uvs[s][i*2]*w,t=uvs[s][i*2+1]*h,out=[0,0,0];
-      if(u<2||t<2||u>w-3||t>h-3)return null;
-      for(let y=-1;y<=1;y++)for(let x=-1;x<=1;x++){const p=((Math.round(t)+y)*w+Math.round(u)+x)*4;out[0]+=d[p];out[1]+=d[p+1];out[2]+=d[p+2];}
-      return out;
-    };
-    for(let s=1;s<frames.length;s++){
-      const sum=[[0,0,0],[0,0,0]];let count=0;
-      for(let i=0;i<MESH;i++){
-        const nx=nrm[i*3],ny=nrm[i*3+1],nz=nrm[i*3+2];
-        const c0=nx*toward[0].x+ny*toward[0].y+nz*toward[0].z,cs=nx*toward[s].x+ny*toward[s].y+nz*toward[s].z;
-        if(c0<.8||cs<.8)continue;
-        const a=sample(0,i),b=sample(s,i);if(!a||!b)continue;
-        for(let k=0;k<3;k++){sum[0][k]+=a[k];sum[1][k]+=b[k];}count++;
-      }
-      if(count>=20)gains[s]=sum[0].map((v,k)=>Math.max(.75,Math.min(1.33,v/(sum[1][k]||1))));
+  // The model's points in one picture (as fractions of its image) and how deep: the
+  // landmarks where that picture has them, and the points between them where the
+  // smoothed surface puts them as the head's frame lies in that picture. And which way
+  // that picture's camera is, in the head's frame.
+  function project(v,Pv,pose,f,L,base){
+    const k=pose.s*f.face,c=v.crop;
+    // Each axis of the head's frame as it lies in the picture, in its pixels per unit.
+    const ax=[f.ex,f.ey,f.ez].map(e=>{const r=apply(pose.R,e);return {x:r.x*k,y:r.y*k,z:r.z*k};});
+    const o=place(pose,f.center);
+    const deep=z=>Math.max(-.99,Math.min(.99,z));
+    const uv=new Float32Array(COUNT*2),dep=new Float32Array(COUNT);
+    for(let i=0;i<BASE;i++){
+      const b=base(i),pb=Pv[b],q=L[i],ob=L[b],dx=q.x-ob.x,dy=q.y-ob.y,dz=q.z-ob.z;
+      // The landmark itself, or the skirt carried by its outline point.
+      const p={x:pb.x+dx*ax[0].x+dy*ax[1].x+dz*ax[2].x,y:pb.y+dx*ax[0].y+dy*ax[1].y+dz*ax[2].y,z:pb.z+dx*ax[0].z+dy*ax[1].z+dz*ax[2].z};
+      uv[i*2]=(p.x-c.x)/c.w;uv[i*2+1]=(p.y-c.y)/c.h;dep[i]=deep((p.z-o.z)/(k*2));
     }
-    return gains;
+    for(let r=1;r<ROUNDS.length;r++){
+      const {from,edges}=ROUNDS[r];
+      for(let e=0;e<edges.length;e+=2){
+        const a=edges[e],b=edges[e+1],i=from+e/2,ox=off[i*3],oy=off[i*3+1],oz=off[i*3+2];
+        uv[i*2]=(uv[a*2]+uv[b*2])/2+(ox*ax[0].x+oy*ax[1].x+oz*ax[2].x)/c.w;
+        uv[i*2+1]=(uv[a*2+1]+uv[b*2+1])/2+(ox*ax[0].y+oy*ax[1].y+oz*ax[2].y)/c.h;
+        dep[i]=deep((dep[a]+dep[b])/2+(ox*ax[0].z+oy*ax[1].z+oz*ax[2].z)/(k*2));
+      }
+    }
+    // Image z grows away from the camera.
+    return {uv,dep,toward:unit({x:-ax[0].z,y:-ax[1].z,z:-ax[2].z})};
   }
 
-  // One picture's depth map: the model where that picture saw it, nearest surface kept.
-  function drawSeen(s){
-    const [w,h]=model.size[s],k=Math.min(1,1024/Math.max(w,h)),t=seens[s];
-    t.w=Math.max(1,Math.round(w*k));t.h=Math.max(1,Math.round(h*k));
-    gl.bindTexture(gl.TEXTURE_2D,t.tex);
-    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,t.w,t.h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-    gl.bindRenderbuffer(gl.RENDERBUFFER,t.rb);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,t.w,t.h);
+  // Each picture's weight at each point of the model: how squarely it saw the point
+  // (its normal against the way to that camera) against the picture that saw it most
+  // squarely, so only the few that faced it count; then shared out so the weights at
+  // a point add up to one, and handed to the front picture where it saw the point
+  // squarely enough (FRONT). Where a picture's depth map shows the point hidden, its
+  // texels get nothing, and the atlas divides the sum by what is left. Also how much
+  // of each point shows: the face's edge fades, and near it, what no picture saw
+  // squarely enough to give more than a stretched smear (by the ear and down the jaw,
+  // with only a front picture); never inside the face, where under the nose and
+  // between the lips no picture sees squarely either.
+  function weigh(seenBy){
+    const W=seenBy.map(()=>new Float32Array(COUNT)),c=new Float32Array(seenBy.length);
+    for(let i=0;i<COUNT;i++){
+      const nx=nrm[i*3],ny=nrm[i*3+1],nz=nrm[i*3+2];
+      let best=-1;
+      seenBy.forEach(({uv,toward},s)=>{
+        const u=uv[i*2],t=uv[i*2+1];
+        c[s]=u>=0&&u<=1&&t>=0&&t<=1?nx*toward.x+ny*toward.y+nz*toward.z:-1;
+        if(c[s]>.05)best=Math.max(best,c[s]);
+      });
+      let sum=0;
+      for(let s=0;s<seenBy.length;s++){const w=c[s]>.05?Math.exp(SHARP*(c[s]-best)):0;W[s][i]=w;sum+=w;}
+      const f=Math.max(0,Math.min(1,(c[0]-FRONT[0])/(FRONT[1]-FRONT[0]))),front=f*f*(3-2*f);
+      if(sum>0)for(let s=0;s<seenBy.length;s++)W[s][i]=W[s][i]/sum*(1-front)+(s?0:front);
+      const k=Math.max(0,Math.min(1,(best-.2)/.3)),squarely=k*k*(3-2*k);
+      shows[i]=edge[i*2]*(1+(squarely-1)*edge[i*2+1]);
+    }
+    return W;
+  }
+
+  // Every picture brought to one colour, since the camera's exposure and white balance
+  // change as the head turns: per picture and channel, the gain that best matches its
+  // colours at the landmarks it saw squarely to what all the pictures together make of
+  // them. A few rounds, then the front picture keeps its own colour and the rest
+  // follow it. Clamped, so a bad match does little harm.
+  function colourGains(views,seenBy,W){
+    const gains=views.map(()=>[1,1,1]);
+    if(views.length<2)return gains;
+    const samples=views.map((v,s)=>{
+      const k=Math.min(1,200/Math.max(v.image.width,v.image.height)),c=document.createElement('canvas');
+      c.width=Math.max(1,Math.round(v.image.width*k));c.height=Math.max(1,Math.round(v.image.height*k));
+      const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v.image,0,0,c.width,c.height);
+      const d=x.getImageData(0,0,c.width,c.height).data,{uv,toward}=seenBy[s],out=new Array(MESH).fill(null);
+      for(let i=0;i<MESH;i++){
+        if(nrm[i*3]*toward.x+nrm[i*3+1]*toward.y+nrm[i*3+2]*toward.z<.7)continue;
+        const u=Math.round(uv[i*2]*c.width),t=Math.round(uv[i*2+1]*c.height);
+        if(u<2||t<2||u>c.width-3||t>c.height-3)continue;
+        const m=[0,0,0];
+        for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++){const p=((t+y)*c.width+u+z)*4;m[0]+=d[p];m[1]+=d[p+1];m[2]+=d[p+2];}
+        out[i]=m;
+      }
+      return out;
+    });
+    for(let round=0;round<3;round++){
+      const ref=new Array(MESH).fill(null);
+      for(let i=0;i<MESH;i++){
+        const m=[0,0,0];let total=0;
+        samples.forEach((sm,s)=>{const w=W[s][i];if(!sm[i]||!w)return;for(let k=0;k<3;k++)m[k]+=w*gains[s][k]*sm[i][k];total+=w;});
+        if(total>0)ref[i]=m.map(v=>v/total);
+      }
+      samples.forEach((sm,s)=>{
+        const a=[0,0,0],b=[0,0,0];let count=0;
+        for(let i=0;i<MESH;i++){if(!sm[i]||!ref[i])continue;for(let k=0;k<3;k++){a[k]+=ref[i][k];b[k]+=sm[i][k];}count++;}
+        if(count>=20)gains[s]=a.map((v,k)=>Math.max(.6,Math.min(1.6,v/(b[k]||1))));
+      });
+    }
+    const front=gains[0];
+    return gains.map(g=>g.map((v,k)=>Math.max(.7,Math.min(1.4,v/front[k]))));
+  }
+
+  // One picture's depth map: the model as that picture saw it (its points in buf.uv
+  // and buf.dep), nearest surface kept, at the size of its image or 1024 at most.
+  function drawSeen(image){
+    const k=Math.min(1,1024/Math.max(image.width,image.height)),t=seenMap;
+    const w=Math.max(1,Math.round(image.width*k)),h=Math.max(1,Math.round(image.height*k));
+    if(w!==t.w||h!==t.h){
+      t.w=w;t.h=h;
+      gl.bindTexture(gl.TEXTURE_2D,t.tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      gl.bindRenderbuffer(gl.RENDERBUFFER,t.rb);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,w,h);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,t.fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t.tex,0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,t.rb);
+    }
     gl.bindFramebuffer(gl.FRAMEBUFFER,t.fbo);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t.tex,0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,t.rb);
-    gl.viewport(0,0,t.w,t.h);gl.disable(gl.BLEND);
+    gl.viewport(0,0,w,h);gl.disable(gl.BLEND);
     gl.clearColor(1,1,1,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.useProgram(seen.p);
-    attrib(seen.a('a_uv'),buf.uv[s],2);attrib(seen.a('a_src'),buf.viewDep[s],1);
+    attrib(seen.a('a_uv'),buf.uv,2);attrib(seen.a('a_src'),buf.dep,1);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LESS);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,index);gl.drawElements(gl.TRIANGLES,TRIANGLES.length,gl.UNSIGNED_SHORT,0);
-    gl.disable(gl.DEPTH_TEST);
-    for(let k=0;k<8;k++)gl.disableVertexAttribArray(k);
+    gl.disable(gl.DEPTH_TEST);detach();
+  }
+
+  // The atlas, `size` texels square: every picture added in (the front one last, so
+  // its picture is still there for what nothing else saw), each texel divided by its
+  // weight, filled past the face's edge, and mipmapped.
+  function bake(views,seenBy,W,gains,size){
+    for(const type of sumTypes)if(bakeWith(type,views,seenBy,W,gains,size))
+      return type===gl.FLOAT?'float':type===gl.UNSIGNED_BYTE?'bytes':'half float';
+    return 'none';
+  }
+  function bakeWith(type,views,seenBy,W,gains,size){
+    const sum=texture(gl.NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,size,size,0,gl.RGBA,type,null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,sum,0);
+    const give=()=>{gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.deleteTexture(sum);return false;};
+    if(gl.checkFramebufferStatus(gl.FRAMEBUFFER)!==gl.FRAMEBUFFER_COMPLETE)return give();
+    gl.viewport(0,0,size,size);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.getError();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,index);
+    for(let s=views.length-1;s>=0;s--){
+      const v=views[s];
+      gl.bindTexture(gl.TEXTURE_2D,picture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,v.image);
+      set(buf.uv,seenBy[s].uv);set(buf.dep,seenBy[s].dep);set(buf.w,W[s]);
+      drawSeen(v.image);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.viewport(0,0,size,size);
+      gl.useProgram(add.p);
+      attrib(add.a('a_t'),buf.t,2);attrib(add.a('a_uv'),buf.uv,2);attrib(add.a('a_dep'),buf.dep,1);attrib(add.a('a_w'),buf.w,1);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,picture);gl.uniform1i(add.u('u_img'),0);
+      gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,seenMap.tex);gl.uniform1i(add.u('u_seen'),1);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform3fv(add.u('u_gain'),gains[s]);gl.uniform1f(add.u('u_tol'),.006);
+      gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE);
+      gl.drawElements(gl.TRIANGLES,TRIANGLES.length,gl.UNSIGNED_SHORT,0);
+      gl.disable(gl.BLEND);detach();
+      // A GPU that takes these sums but cannot blend them says so on the first draw.
+      if(s===views.length-1&&gl.getError()!==gl.NO_ERROR)return give();
+    }
+    // Divided out, into the atlas (the front picture's points are still in buf.uv).
+    const next=texture(gl.NEAREST),spare=texture(gl.NEAREST);
+    for(const t of [next,spare]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
+    gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,next,0);
+    gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(resolve.p);
+    attrib(resolve.a('a_t'),buf.t,2);attrib(resolve.a('a_uv'),buf.uv,2);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,sum);gl.uniform1i(resolve.u('u_sum'),0);
+    gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,picture);gl.uniform1i(resolve.u('u_img'),1);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.uniform1f(resolve.u('u_size'),size);
+    gl.drawElements(gl.TRIANGLES,TRIANGLES.length,gl.UNSIGNED_SHORT,0);
+    detach();
+    // Filled outwards 1, 2, 4… 32 texels a step, back and forth between two textures,
+    // ending where it began.
+    gl.useProgram(fill.p);
+    attrib(fill.a('a_q'),buf.quad,2);
+    gl.uniform1i(fill.u('u_src'),0);
+    let from=next,to=spare;
+    for(let step=1;step<=32;step*=2){
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,to,0);
+      gl.bindTexture(gl.TEXTURE_2D,from);gl.uniform1f(fill.u('u_step'),step/size);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      [from,to]=[to,from];
+    }
+    detach();
     gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+    gl.deleteTexture(sum);gl.deleteTexture(to);gl.deleteTexture(atlas);
+    atlas=from;
+    gl.bindTexture(gl.TEXTURE_2D,atlas);gl.generateMipmap(gl.TEXTURE_2D);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    if(anisotropy)gl.texParameterf(gl.TEXTURE_2D,anisotropy.TEXTURE_MAX_ANISOTROPY_EXT,Math.min(8,gl.getParameter(anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+    // The last picture is not needed any more.
+    gl.bindTexture(gl.TEXTURE_2D,picture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
+    return true;
   }
 
   // The edits, on the front picture's landmarks, carried into the model; the skirt
@@ -373,26 +570,17 @@ export function createViewer3d(canvas){
     gl.clearColor(.078,.047,.067,1);gl.clearDepth(1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     if(!model)return;
     gl.useProgram(main.p);
-    const deg=Math.PI/180,aspect=width/height,u=main.u;
+    const deg=Math.PI/180,aspect=width/height;
     const mvp=multiply(perspective(fov(aspect,4.4,model.radius),aspect,.5,20),modelView(yaw*deg,pitch*deg,4.4,model.pivot));
-    gl.uniformMatrix4fv(u('u_mvp'),false,new Float32Array(mvp));
-    gl.uniform1f(u('u_tol'),.006);
-    for(let s=0;s<VIEWS;s++){const t=model.toward[s]||{x:0,y:0,z:0};gl.uniform3f(u(`u_to${s}`),t.x,t.y,t.z);}
-    gl.uniform3f(u('u_has'),1,model.views>1?1:0,model.views>2?1:0);
-    gl.uniform3fv(u('u_gain1'),model.gains[1]);gl.uniform3fv(u('u_gain2'),model.gains[2]);
+    gl.uniformMatrix4fv(main.u('u_mvp'),false,new Float32Array(mvp));
     attrib(main.a('a_pos'),mode==='before'?buf.before:buf.after,3);
-    attrib(main.a('a_uv0'),buf.uv[0],2);attrib(main.a('a_uv1'),buf.uv[1],2);attrib(main.a('a_uv2'),buf.uv[2],2);
-    attrib(main.a('a_dep'),buf.dep,3);attrib(main.a('a_n'),buf.n,3);attrib(main.a('a_edge'),buf.edge,2);
-    for(let s=0;s<VIEWS;s++){
-      gl.activeTexture(gl.TEXTURE0+s);gl.bindTexture(gl.TEXTURE_2D,images[s]);gl.uniform1i(u(`u_img${s}`),s);
-      gl.activeTexture(gl.TEXTURE3+s);gl.bindTexture(gl.TEXTURE_2D,seens[s].tex);gl.uniform1i(u(`u_seen${s}`),3+s);
-    }
-    gl.activeTexture(gl.TEXTURE0);
+    attrib(main.a('a_t'),buf.t,2);attrib(main.a('a_a'),buf.a,1);
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,atlas);gl.uniform1i(main.u('u_atlas'),0);
     gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);
     gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,index);gl.drawElements(gl.TRIANGLES,TRIANGLES.length,gl.UNSIGNED_SHORT,0);
     gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);
-    for(let k=0;k<8;k++)gl.disableVertexAttribArray(k);
+    detach();
   }
   function fitCanvas(){
     const r=Math.min(2,window.devicePixelRatio||1);
@@ -457,6 +645,12 @@ export function createViewer3d(canvas){
     build,setAmounts,draw,animateTo,
     get state(){return {...state};},
     get views(){return model?.views||0;},
+    // The model's landmarks, as the tracker would give them for the front picture's
+    // frame: the shape solved for over every picture, for measuring.
+    get landmarks(){return model?.landmarks||null;},
+    // What the model was made with, for the debug export: pictures, the atlas's size and
+    // what its sums were kept in, and each picture's colour gains.
+    get info(){return model?{views:model.views,atlas:model.size,sums:model.sums,gains:model.gains.map(g=>g.map(v=>+v.toFixed(3)))}:null;},
     get spinning(){return !!spin;},
     setMode(mode){state.mode=mode;draw();},
     spin(on){if(on){startSpin();onSpin?.(true);}else stopSpin();},
@@ -473,7 +667,7 @@ export function createViewer3d(canvas){
       draw();
       return c;
     },
-    clear(){model=null;ready=false;stopSpin();draw();},
+    clear(){model=null;ready=false;stopSpin();gl.deleteTexture(atlas);atlas=texture();draw();},
     dispose(){
       if(disposed)return;disposed=true;stopSpin();cancelAnimationFrame(raf);
       gl.getExtension('WEBGL_lose_context')?.loseContext();

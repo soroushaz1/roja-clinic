@@ -385,6 +385,21 @@ select{
 .v3-steps li.now{color:#F6ECF1;font-weight:700}
 .v3-steps li.done{color:#7FD8A6}
 .v3-steps li.done::after{content:" ✓"}
+/* The angles taken, one cell each, mirrored like the picture; the dot is the head now.
+   Outlined: the cells the model needs. */
+.v3-grid{
+  position:relative;direction:ltr;display:grid;grid-template-columns:repeat(11,1fr);grid-template-rows:repeat(3,14px);
+  gap:3px;margin:10px 0 4px;
+}
+.v3-grid .cell{border-radius:3px;background:#FFFFFF0F;transition:background-color .2s}
+.v3-grid .cell.need{box-shadow:inset 0 0 0 1px #F4E3B066}
+.v3-grid .cell.got{background:#7FD8A6;box-shadow:none}
+.v3-dot{
+  position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;pointer-events:none;
+  background:#F6ECF1;box-shadow:0 0 0 2px #B83A6A;transition:left .12s linear,top .12s linear;
+}
+.v3-dot[hidden]{display:none}
+.v3-count{min-height:1.2em;margin:4px 0 0;font-size:12px;color:#BBA1AD}
 .v3-now{min-height:1.4em;margin:6px 0;font-size:13px;color:#F4E3B0}
 .v3-capture .help{color:#BBA1AD}
 .v3-actions{display:flex;gap:8px;margin-top:8px}
@@ -392,7 +407,8 @@ select{
 .v3-actions .ghost{background:#0C070A99;border-color:#FFFFFF1F;color:#E9D6DF}
 @media (max-width:900px){
   .v3-capture{bottom:8px;inset-inline-start:8px;padding:10px 12px;width:min(300px,calc(100% - 16px))}
-  .v3-capture .help{display:none}
+  /* The grid and the line under it say what to do; the steps would hide the face. */
+  .v3-capture .help,.v3-steps{display:none}
 }
 
 /* The floating tools, glass over the dark around the frame. */

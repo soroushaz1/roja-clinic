@@ -13,7 +13,7 @@
 // A few controls change skin texture rather than shape (the non-surgical
 // treatments). Those are not deformers: textureLayers() turns them into masked
 // smoothing passes for the stage.
-import {CANON3} from './facemesh.js?v=12';
+import {CANON3} from './facemesh.js?v=13';
 
 // Region controls. Ids are stable: procedures and the fine-tuning panel address them.
 // Shape controls run −100…100 with positive meaning "more"; texture controls 0…100.

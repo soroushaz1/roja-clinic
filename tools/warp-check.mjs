@@ -11,13 +11,16 @@
 // controls; that the measurements hardly change with the angle and do register the
 // edits; that the
 // background follows the face's outline and stays put far from it; and which side of
-// a turned face is marked as facing the camera.
+// a turned face is marked as facing the camera; and that the shape solved for over
+// many pictures (fuse.js) finds each picture's angle and a depth one picture only
+// guesses.
 import assert from 'node:assert/strict';
 import {CANON3} from '../facemesh.js';
 import {points3,headFrame,displacements,controls,zeroAmounts,hump} from '../deform.js';
 import {lipStyles,procedures} from '../procedures.js';
 import {createWarp,COLS,ROWS} from '../warp.js';
 import {measure,symmetry,moved,metrics} from '../measure.js';
+import {fuse,fitPose,place} from '../fuse.js';
 
 const W=640,H=480,SCALE=10;                       // ~150 px ear to ear
 const rad=d=>d*Math.PI/180;
@@ -182,6 +185,38 @@ assert.equal(createWarp().compute(face(30),W,H,zeroAmounts()),null,'zero amounts
     else assert(front>1,`${c.id} moves nothing from the front (${front.toFixed(2)} px)`);
   }
   report.controls=`${controls.filter(c=>!c.texture&&!c.modifies).length} shape controls, ${controls.filter(c=>c.depth).length} in depth`;
+}
+
+/* many pictures make one shape: each one's angle is found, and the depth the tracker
+   only guesses from one picture comes from the turned ones */
+{
+  // A face whose nose stands out a fifth of a face width further than the canonical
+  // one, seen by a tracker that measures it across each picture (with a pixel or so of
+  // noise) but takes its depth from the face it expects: the canonical one.
+  const C=[];for(let i=0;i<468;i++)C.push({x:CANON3[i*3],y:CANON3[i*3+1],z:CANON3[i*3+2]});
+  const NOSE=[1,2,4,5,6,19,94,195,197,168,45,275,44,274,48,278,115,344,220,440];
+  const T=C.map((q,i)=>NOSE.includes(i)?{...q,z:q.z+3}:q);
+  const turn=(q,yaw,pitch)=>{const cy=Math.cos(rad(yaw)),sy=Math.sin(rad(yaw)),cp=Math.cos(rad(pitch)),sp=Math.sin(rad(pitch));
+    const x1=q.x*cy+q.z*sy,z1=-q.x*sy+q.z*cy;return {x:x1,y:q.y*cp-z1*sp,z:q.y*sp+z1*cp};};
+  let seed=7;const noise=()=>{seed=(seed*16807)%2147483647;return seed/2147483647-.5;};
+  const seen=(yaw,pitch)=>T.map((q,i)=>{const a=turn(q,yaw,pitch),b=turn(C[i],yaw,pitch);
+    return {x:W/2+SCALE*a.x+noise()*2,y:H/2+SCALE*a.y+noise()*2,z:-SCALE*b.z};});
+  const angles=[[0,0],[-36,0],[-28,0],[-20,0],[-12,0],[12,0],[20,0],[28,0],[36,0],[-8,-14],[8,-14],[-8,14],[8,14]];
+  const Ps=angles.map(([y,p])=>seen(y,p)),truth=T.map(q=>({x:W/2+SCALE*q.x,y:H/2+SCALE*q.y,z:-SCALE*q.z}));
+  // How far the nose is from the true one, once laid over it.
+  const noseError=X=>{const pose=fitPose(X,truth);return NOSE.reduce((e,i)=>{const q=place(pose,X[i]);
+    return e+Math.hypot(q.x-truth[i].x,q.y-truth[i].y,q.z-truth[i].z);},0)/NOSE.length;};
+  const {X,poses}=fuse(Ps),one=noseError(Ps[0]),all=noseError(X);
+  assert(all<one*.6,`the nose from all the pictures is no nearer the truth than from the front one (${all.toFixed(2)} vs ${one.toFixed(2)} px)`);
+  poses.forEach((pose,k)=>{
+    // The picture's turn, read back: yaw about the vertical, pitch about the horizontal,
+    // both the other way round, as the picture's z runs away from the camera.
+    const yaw=-Math.atan2(pose.R[0][2],pose.R[2][2])*180/Math.PI,pitch=-Math.asin(Math.max(-1,Math.min(1,-pose.R[1][2])))*180/Math.PI;
+    assert(Math.abs(yaw-angles[k][0])<1&&Math.abs(pitch-angles[k][1])<1,`picture ${k} found at ${yaw.toFixed(1)}°, ${pitch.toFixed(1)}° instead of ${angles[k]}`);
+  });
+  const alone=fuse([Ps[0]]).X;
+  assert(alone.every((q,i)=>q.x===Ps[0][i].x&&q.y===Ps[0][i].y&&q.z===Ps[0][i].z),'one picture alone is not left as it is');
+  report.fuse={pictures:Ps.length,noseFront:+one.toFixed(2),noseAll:+all.toFixed(2)};
 }
 
 console.log(JSON.stringify(report,null,1));
