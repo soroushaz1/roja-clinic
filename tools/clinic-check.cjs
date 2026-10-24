@@ -12,6 +12,7 @@
 // browser through CLINIC_CHROMIUM (an executable path), installed Chrome, or
 // Playwright's own Chromium.
 const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const {turnedFaces}=require('./make-turned-face.cjs');
 
 function loadPlaywright(){
   const tries=[process.env.PLAYWRIGHT_MODULE,'playwright'];
@@ -50,6 +51,25 @@ const fakeCamera=({data})=>{
     draw();window.testTimer=setInterval(draw,70);window.testStream=c.captureStream(15);return window.testStream;
   }});
 };
+
+// A webcam with a head turning in it (frames from make-turned-face.cjs): the first
+// frame until `testTurn` is set, then each of the others for `hold` ms, in order, and
+// the last one after that.
+const turningCamera=({frames,hold})=>{
+  const NativeWorker=window.Worker;
+  window.Worker=class extends NativeWorker{constructor(...a){super(...a);this.addEventListener('message',e=>{if(e.data.type==='result')window.testLandmarks=e.data.landmarks;});}};
+  Object.defineProperty(navigator.mediaDevices,'getUserMedia',{value:async()=>{
+    const images=await Promise.all(frames.map(async src=>{const i=new Image();i.src=src;await i.decode();return i;}));
+    const c=document.createElement('canvas');c.width=640;c.height=480;
+    const ctx=c.getContext('2d');let start=0;window.testTurn=false;
+    const draw=()=>{
+      if(window.testTurn&&!start)start=performance.now();
+      ctx.drawImage(images[start?Math.min(images.length-1,Math.floor((performance.now()-start)/hold)):0],0,0);
+    };
+    draw();window.testTimer=setInterval(draw,70);window.testStream=c.captureStream(15);return window.testStream;
+  }});
+};
+const persianNumber=text=>Number(((text||'').match(/[۰-۹]+/)||['۰'])[0].replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
 
 // The stage against its source, per grid cell, as mean absolute difference.
 const probe=({GX,GY})=>{
@@ -323,6 +343,53 @@ const setSlider=async(page,selector,value)=>{await page.locator(selector).fill(S
     await page.keyboard.press('Escape');
     await page.waitForFunction(()=>document.querySelector('#v3').hidden,null,{timeout:5000});
     report.view3dCamera='front taken by itself, built from one picture, closed with Escape';
+
+    /* ---- the 3D view from a head turning in front of the camera: a picture is kept at
+       each angle it turns through, both ways, and the model is made from all of them ---- */
+    {
+      const yaws=[0,8,16,24,32,40,48,56,48,40,32,24,16,8,0,-8,-16,-24,-32,-40,-48,-40,-32,-24,-16,-8,0];
+      const angles=[...new Set(yaws)],helper=await browser.newPage();
+      await helper.goto(origin,{waitUntil:'domcontentloaded',timeout:60000});
+      const urls=await turnedFaces(helper,angles.map(y=>[y,0]),'image/jpeg');
+      await helper.close();
+      const turn=await browser.newPage({viewport:{width:1440,height:960},acceptDownloads:true});
+      turn.on('pageerror',e=>errors.push(e.message));
+      await turn.addInitScript(turningCamera,{frames:yaws.map(y=>urls[angles.indexOf(y)]),hold:700});
+      await turn.goto(origin,{waitUntil:'domcontentloaded',timeout:60000});
+      await turn.locator('#start').click();
+      await turn.waitForFunction(()=>window.testLandmarks,null,{timeout:90000});
+      await turn.waitForFunction(()=>!document.querySelector('#view3d').disabled,null,{timeout:20000});
+      await turn.locator('#view3d').click();
+      await turn.waitForFunction(()=>document.querySelector('#v3-step-front').classList.contains('done'),null,{timeout:20000})
+        .catch(()=>assert.fail('the front-on picture of the turning head was not taken'));
+      await turn.evaluate(()=>{window.testTurn=true;});
+      await turn.waitForTimeout(yaws.length*700+1500);
+      const taken=await turn.evaluate(()=>({count:document.querySelector('#v3-count').textContent,
+        cells:[...document.querySelectorAll('#v3-grid .cell')].map(c=>c.classList.contains('got'))}));
+      const count=persianNumber(taken.count);
+      // Cells 11–15 are the level row turned to the head's right, 17–21 to its left.
+      const right=taken.cells.slice(11,16).filter(Boolean).length,left=taken.cells.slice(17,22).filter(Boolean).length;
+      assert(count>=6,`only ${count} angles were kept from a head turning both ways`);
+      assert(left>=2&&right>=2,`the angles kept are not on both sides (${left} left, ${right} right)`);
+      if(await turn.locator('#v3-capture').isVisible())await turn.locator('#v3-build').click();
+      await turn.waitForFunction(()=>!document.querySelector('#v3').hidden,null,{timeout:30000});
+      assert.match(await turn.locator('#status').textContent(),new RegExp(`از ${taken.count.match(/[۰-۹]+/)[0]} زاویه`),'the status does not give the number of angles');
+      await turn.waitForTimeout(700);
+      const [built]=await Promise.all([turn.waitForEvent('download'),turn.evaluate(()=>{document.querySelector('#debug-panel').open=true;document.querySelector('#debug-export').click();})]);
+      const info=JSON.parse(fs.readFileSync(await built.path(),'utf8')).view3d;
+      assert(info&&info.views===count,`the model was not made from the ${count} angles kept: ${JSON.stringify(info)}`);
+      assert.notEqual(info.sums,'none','the atlas could not be baked');
+      assert(info.gains.every(g=>g.every(v=>v>.69&&v<1.41)),`a picture's colour gain is out of bounds: ${JSON.stringify(info.gains)}`);
+      const look=()=>turn.evaluate(()=>{const s=document.querySelector('#v3-canvas'),c=document.createElement('canvas');c.width=192;c.height=144;
+        const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(s,0,0,192,144);const d=x.getImageData(0,0,192,144).data;
+        let face=0;for(let i=0;i<d.length;i+=4)if(Math.abs(d[i]-20)+Math.abs(d[i+1]-12)+Math.abs(d[i+2]-17)>40)face++;return face/(192*144);});
+      const front=await look();
+      await turn.locator('#v3-angle [data-angle="75"]').click();await turn.waitForTimeout(700);
+      const profile=await look();
+      assert(front>.15&&profile>.08,`the model made from many angles shows too little (${(front*100).toFixed(1)}% front, ${(profile*100).toFixed(1)}% profile)`);
+      report.view3dTurning={angles:count,left,right,atlas:info.atlas,sums:info.sums,face:+(front*100).toFixed(1),profile:+(profile*100).toFixed(1)};
+      await turn.close();
+    }
 
     await page.locator('#stop').click();
     assert(await page.evaluate(()=>window.testStream.getTracks().every(t=>t.readyState==='ended')),'camera tracks left running');

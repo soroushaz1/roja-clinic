@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fa" dir="rtl" data-release="12">
+<html lang="fa" dir="rtl" data-release="13">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -14,7 +14,7 @@
 <link rel="icon" href="favicon.svg">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preload" href="fonts/Estedad-var.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="clinic.css?v=12">
+<link rel="stylesheet" href="clinic.css?v=13">
 </head>
 <body>
 
@@ -123,16 +123,19 @@
         </div>
         <p class="v3-hint" id="v3-hint">برای چرخاندن، روی صورت بکش؛ دو بار زدن آن را روبه‌رو برمی‌گرداند.</p>
       </div>
-      <!-- Taking the pictures the 3D view is made from. -->
+      <!-- Taking the pictures the 3D view is made from: as many angles as the head
+           turns through, each cell of the grid one of them. -->
       <div class="v3-capture" id="v3-capture" role="dialog" aria-labelledby="v3-capture-title" hidden>
         <h3 id="v3-capture-title">ساختن نمای سه‌بعدی</h3>
         <ol class="v3-steps">
           <li id="v3-step-front">روبه‌روی دوربین نگاه کن</li>
-          <li id="v3-step-side">سر را آرام به یک طرف بچرخان</li>
-          <li id="v3-step-other">حالا آرام به طرف دیگر</li>
+          <li id="v3-step-side">سر را آرام به چپ و راست بچرخان</li>
+          <li id="v3-step-tilt">کمی هم بالا و پایین</li>
         </ol>
+        <div class="v3-grid" id="v3-grid" aria-hidden="true"><i class="v3-dot" id="v3-dot" hidden></i></div>
+        <p class="v3-count" id="v3-count"></p>
         <p class="v3-now" id="v3-now" aria-live="polite"></p>
-        <p class="help">هر زاویه وقتی سر چند لحظه ثابت بماند خودش گرفته می‌شود. سه زاویه کناره‌های بینی و گونه را در نیم‌رخ درست‌تر می‌سازد؛ با یک زاویه هم می‌شود ساخت.</p>
+        <p class="help">هر زاویه‌ای که سر آرام از آن بگذرد خودش گرفته می‌شود و هرچه زاویه‌ها بیشتر، شکل و بافت مدل دقیق‌تر است. وقتی خانه‌های لازم پر شد مدل خودش ساخته می‌شود؛ با یک زاویهٔ روبه‌رو هم می‌شود ساخت.</p>
         <div class="v3-actions">
           <button type="button" class="primary" id="v3-build" disabled>با همین بساز</button>
           <button type="button" class="ghost" id="v3-cancel">لغو</button>
@@ -348,6 +351,6 @@
 })();
 </script>
 <script nomodule>document.getElementById('status').textContent='این مرورگر قدیمی است و این برنامه را اجرا نمی‌کند. آخرین نسخهٔ Chrome را نصب کن.';</script>
-<script type="module" src="app.js?v=12"></script>
+<script type="module" src="app.js?v=13"></script>
 </body>
 </html>
