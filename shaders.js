@@ -167,7 +167,11 @@ void main(){
     // a nostril) is left mostly alone.
     float away=abs(Y-Yr)/Yr;
     float skin=clamp(1.-(away-.3)*1.6,0.,1.);
-    vec3 even=mix(base,smoothed(base),clamp(u_smooth*cover*skin,0.,1.));
+    // The foundation hides texture by its smoothing amount; a skin treatment (smooth
+    // mode) has to show at its usual setting, so its amount is eased up: a third of
+    // the way already takes away about three quarters of the fine texture.
+    float k=u_mode<4.5?u_smooth:1.-pow(1.-clamp(u_smooth,0.,1.),3.);
+    vec3 even=mix(base,smoothed(base),clamp(k*cover*skin,0.,1.));
     if(u_mode<4.5){
       float s=clamp(luma(even)/Yr,0.,2.);
       // Below the region's mean the layer inherits the shadow it sits in. A foundation
