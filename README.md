@@ -124,6 +124,13 @@ PDF درست (با `pdfinfo` اگر نصب باشد) که با برداشتن ی
 را ۵۰ درجه می‌چرخاند و بافت عکس را دوباره روی شبکهٔ چرخیده می‌کشد (ردیاب آن را حدود ۳۳ درجه
 می‌خواند). `clinic-check.cjs` سرِ چرخان دوربین ساختگی را هم با همین می‌سازد.
 
+
+`node tools/procedure-audit.cjs <faces folder>` puts every procedure, at its usual
+strength, on every face in a folder (front-on portraits; Roja's `tools/showcase/faces`
+are made by AI for this) and reports how much of each face it changed: how many pixels
+visibly, and by how much on average. It fails when a procedure shows almost nothing,
+as resurfacing did before its smoothing was eased up.
+
 ## سه‌بعدی چطور کار می‌کند
 
 1. **مدل صورت**: MediaPipe برای هر کدام از ۴۷۸ نقطه، جای آن در تصویر و عمقش را می‌دهد

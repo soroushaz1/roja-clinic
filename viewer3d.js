@@ -25,10 +25,10 @@
 // The edits move the model's points in 3D (deform.js), and the points keep the texture
 // of where they were, exactly as on the live picture. It is all done on this device,
 // from frames already on screen.
-import {points3,headFrame,displacements} from './deform.js?v=13';
-import {WARP_TRIANGLES} from './facemesh.js?v=13';
-import {PRECISION,SEEN_VERT,SEEN_FRAG} from './shaders.js?v=13';
-import {fuse,apply,place,MESH} from './fuse.js?v=13';
+import {points3,headFrame,displacements} from './deform.js?v=14';
+import {WARP_TRIANGLES} from './facemesh.js?v=14';
+import {PRECISION,SEEN_VERT,SEEN_FRAG} from './shaders.js?v=14';
+import {fuse,apply,place,MESH} from './fuse.js?v=14';
 
 const LEVELS=2;
 // The face's outline, in order round it (MediaPipe's face oval).

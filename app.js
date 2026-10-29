@@ -1,21 +1,21 @@
-import {createStage,layerModes} from './stage.js?v=13';
-import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=13';
-import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=13';
-import {renderDebug,nearest} from './debug.js?v=13';
-import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=13';
-import {createWarp,MESH} from './warp.js?v=13';
-import {createRecords} from './records.js?v=13';
-import {createPresenter} from './presenter.js?v=13';
-import {CANON,CANON_ASPECT} from './facemesh.js?v=13';
-import {createMaskPainter,createSmoother} from './masks.js?v=13';
-import {createViewer3d} from './viewer3d.js?v=13';
+import {createStage,layerModes} from './stage.js?v=14';
+import {controls,regions,controlLandmarks,controlRange,frameLandmarks,points3,headFrame,deformers,displacements,textureLayers} from './deform.js?v=14';
+import {procedures,byId,amountsFor,resolve,kinds,lipStyles} from './procedures.js?v=14';
+import {renderDebug,nearest} from './debug.js?v=14';
+import {metrics,measure,moved,symmetry,pose as poseOf} from './measure.js?v=14';
+import {createWarp,MESH} from './warp.js?v=14';
+import {createRecords} from './records.js?v=14';
+import {createPresenter} from './presenter.js?v=14';
+import {CANON,CANON_ASPECT} from './facemesh.js?v=14';
+import {createMaskPainter,createSmoother} from './masks.js?v=14';
+import {createViewer3d} from './viewer3d.js?v=14';
 
 const $=id=>document.getElementById(id);
 // A host or CDN can keep a page for a few minutes: just after a release, a page kept
 // from the one before can be handed this newer script, which would then look for
 // elements that page does not have. Such a page is loaded afresh, once; if it is still
 // the old one, it says a new version is on its way instead of failing.
-const RELEASE='13';
+const RELEASE='14';
 if(document.documentElement.dataset.release!==RELEASE){
   let tried=null;
   try{tried=sessionStorage.getItem('clinic-reloaded');sessionStorage.setItem('clinic-reloaded',RELEASE);}catch{}
@@ -264,7 +264,7 @@ function ensureStage(){
 }
 function textureLayer(t,face){
   return {key:t.key,color:[1,1,1],amount:1,mode:layerModes.smooth,detail:0,gloss:0,matte:0,shimmer:0,
-    smooth:t.smooth,bright:t.bright||0,radius:Math.max(2,face*.035),radiusK:.035};
+    smooth:t.smooth,bright:t.bright||0,radius:Math.max(2,face*.05),radiusK:.05};
 }
 // What the stage should draw right now: the "after" side, and the untouched "before"
 // side when there is something to compare.
@@ -580,7 +580,7 @@ function onTracker(d){
 function ensureTracker(){
   if(tracker||trackerStarting)return;
   let w=null;
-  try{w=new Worker(new URL(`face-worker.js?v=13${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
+  try{w=new Worker(new URL(`face-worker.js?v=14${gpuQuery}`,import.meta.url));}catch(e){perf.lastError=`worker: ${e.message}`;}
   if(!w){useTracker('page','no worker');return;}
   ready=false;busy=false;
   tracker={kind:'worker',post:(m,transfer)=>w.postMessage(m,transfer),close:()=>w.terminate()};
@@ -600,7 +600,7 @@ async function useTracker(kind,reason){
   const token=++trackerGeneration;
   try{
     const Vision=await import('./vendor/vision_bundle.mjs');
-    await import('./face-core.js?v=13');
+    await import('./face-core.js?v=14');
     const core=self.rojaFaceCore(Vision,new URL('./',import.meta.url).href);
     const found=await core.init('CPU',(loaded,total)=>{if(token===trackerGeneration)onTracker({type:'progress',loaded,total});});
     if(token!==trackerGeneration){core.close();return;}
