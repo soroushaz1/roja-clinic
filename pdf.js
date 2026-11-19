@@ -32,7 +32,7 @@ export function makePdf(pages,{title='',author='',created=new Date()}={}){
   const first=4,kids=pages.map((_,i)=>`${first+i*3} 0 R`).join(' ');
   obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
   obj(2,`<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
-  obj(3,`<< /Title ${pdfText(title)} /Author ${pdfText(author)} /Producer ${pdfText('Roja Clinic')} /CreationDate (${date(created)}) >>`);
+  obj(3,`<< /Title ${pdfText(title)} /Author ${pdfText(author)} /Producer ${pdfText('Procedure preview')} /CreationDate (${date(created)}) >>`);
   pages.forEach((p,i)=>{
     const n=first+i*3,content=enc.encode(`q ${A4.w} 0 0 ${A4.h} 0 0 cm /P Do Q`);
     obj(n,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${A4.w} ${A4.h}] /Resources << /XObject << /P ${n+2} 0 R >> >> /Contents ${n+1} 0 R >>`);
