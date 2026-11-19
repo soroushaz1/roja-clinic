@@ -16,7 +16,7 @@ function paint(){
   const live=!!state.live&&!!view.srcObject;
   view.hidden=!live;
   $('idle').hidden=live;
-  $('idle-title').textContent=state.clinic||'رُژا کلینیک';
+  $('idle-title').textContent=state.clinic||'شبیه‌ساز عمل‌های زیبایی';
   $('idle-text').textContent=state.message||'نمایشگر بیمار آماده است.';
   $('badge').hidden=!live;
   $('caption').hidden=!live||!state.caption;
@@ -32,7 +32,7 @@ function paint(){
     $('seam-after').textContent=after;$('seam-after').style.right=(b.left+16)+'px';
     $('seam-before').style.bottom=$('seam-after').style.bottom=(innerHeight-b.top-b.height)+'px';
   }
-  document.title=state.clinic?`${state.clinic} | نمایشگر بیمار`:'رُژا کلینیک | نمایشگر بیمار';
+  document.title=state.clinic?`${state.clinic} | نمایشگر بیمار`:'نمایشگر بیمار';
 }
 
 // What the doctor's window calls. A stream from another window of the same site plays

@@ -193,7 +193,7 @@ export function createRecords({$,el,toast,fa,icon,saveBlob}){
   /* ---- backups ---- */
   async function saveBackup(){
     const data=await store.backup();
-    saveBlob(new Blob([JSON.stringify(data)],{type:'application/json'}),`roja-clinic-backup-${store.today()}.json`);
+    saveBlob(new Blob([JSON.stringify(data)],{type:'application/json'}),`clinic-backup-${store.today()}.json`);
     toast(`پشتیبان ${fa.format(data.patients.length)} بیمار و ${fa.format(data.shots.length)} عکس ذخیره شد. این فایل عکس بیماران را دارد؛ آن را امن نگه دار.`);
   }
   async function loadBackup(file){
@@ -202,7 +202,7 @@ export function createRecords({$,el,toast,fa,icon,saveBlob}){
       const got=await store.restore(JSON.parse(await file.text()));
       toast(`${fa.format(got.patients)} بیمار و ${fa.format(got.shots)} عکس برگشت.`);
       renderList();
-    }catch(e){toast('این فایل پشتیبان رُژا کلینیک نیست یا خوانده نشد.');}
+    }catch(e){toast('این فایل پشتیبان این برنامه نیست یا خوانده نشد.');}
   }
 
   /* ---- wiring ---- */

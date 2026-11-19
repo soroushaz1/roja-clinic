@@ -56,7 +56,7 @@ export async function buildReport(r){
     pages.push(c);y=M;
     if(pages.length>1){
       // A slim running head on the pages after the first.
-      write(r.clinic||'رُژا کلینیک',W-M,y+24,{size:22,weight:600});
+      write(r.clinic||'شبیه‌ساز عمل‌های زیبایی',W-M,y+24,{size:22,weight:600});
       write(`${r.patient.name||r.patient.code||''} · ${persian.format(r.date)}`,M,y+24,{size:20,color:C.muted,align:'left'});
       y+=44;rule(y);y+=36;
     }
@@ -93,7 +93,7 @@ export async function buildReport(r){
 
   /* ---- the first page: who, where, when ---- */
   newPage();
-  write(r.clinic||'رُژا کلینیک',W-M,y+40,{size:40,weight:800});
+  write(r.clinic||'شبیه‌ساز عمل‌های زیبایی',W-M,y+40,{size:40,weight:800});
   if(r.doctor)write(r.doctor,W-M,y+84,{size:24,color:C.muted});
   write('گزارش پیش‌نمایش عمل',M,y+36,{size:26,weight:800,color:C.accent,align:'left'});
   write(persian.format(r.date),M,y+78,{size:22,color:C.muted,align:'left'});
@@ -194,7 +194,7 @@ export async function buildReport(r){
   pages.forEach((c,i)=>{
     ctx=c.getContext('2d');
     rule(H-M+6,C.line,2);
-    write('شبیه‌سازی تصویری، نه وعدهٔ نتیجه · رُژا کلینیک',W-M,H-M+44,{size:17,color:C.faint});
+    write('شبیه‌سازی تصویری، نه وعدهٔ نتیجه',W-M,H-M+44,{size:17,color:C.faint});
     write(`صفحهٔ ${fa.format(i+1)} از ${fa.format(pages.length)}`,M,H-M+44,{size:17,color:C.faint,align:'left'});
   });
   return pages;
