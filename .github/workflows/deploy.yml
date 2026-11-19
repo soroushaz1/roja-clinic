@@ -1,14 +1,14 @@
 # Puts main on the server after every push to it, with tools/deploy.sh: the app in
-# /var/www/clinic, served at https://pythonpath.ir/clinic/ by Roja's nginx site. Can
+# /var/www/clinic, served at https://tamirdesk.ir/ by server/nginx-tamirdesk.conf. Can
 # also be run by hand from the Actions tab ("Run workflow").
 #
 # Needs the same two repository secrets as soroushaz1/roja's deploy (Settings →
 # Secrets and variables → Actions):
 #   ROJA_DEPLOY_KEY   the private SSH key whose public half is in the server's
 #                     /root/.ssh/authorized_keys
-#   ROJA_KNOWN_HOSTS  the server's host key, the output of: ssh-keyscan 204.48.27.227
+#   ROJA_KNOWN_HOSTS  the server's host key, the output of: ssh-keyscan 87.107.108.142
 # and, only if the server moves, a repository variable ROJA_HOST (default
-# root@204.48.27.227).
+# root@87.107.108.142).
 #
 # The host key is pinned rather than accepted on first sight, so the deploy key is
 # never offered to a server that only claims to be this one.
@@ -34,12 +34,12 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy to pythonpath.ir/clinic
+    name: Deploy to tamirdesk.ir
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: clinic
-      url: https://pythonpath.ir/clinic/
+      url: https://tamirdesk.ir/
     env:
       HAS_KEY: ${{ secrets.ROJA_DEPLOY_KEY != '' && secrets.ROJA_KNOWN_HOSTS != '' }}
     steps:
@@ -69,14 +69,14 @@ jobs:
 
       - name: Deploy
         env:
-          ROJA_HOST: ${{ vars.ROJA_HOST || 'root@204.48.27.227' }}
+          ROJA_HOST: ${{ vars.ROJA_HOST || 'root@87.107.108.142' }}
         run: bash tools/deploy.sh
 
       # The page the server now gives out is this commit's release, and the files the
       # face tracker needs come with the types a browser insists on.
       - name: Check the live app
         run: |
-          base=https://pythonpath.ir/clinic/
+          base=https://tamirdesk.ir/
           want=$(grep -o 'data-release="[0-9]*"' index.html)
           ok=
           for i in 1 2 3 4 5; do
@@ -84,7 +84,7 @@ jobs:
             [ "$got" = "$want" ] && { echo "live: $got"; ok=1; break; }
             echo "live: ${got:-nothing} (want $want), trying again"; sleep 10
           done
-          [ -n "$ok" ] || { echo "::error::$base does not serve $want. Is Roja's nginx site (with /clinic/) deployed?"; exit 1; }
+          [ -n "$ok" ] || { echo "::error::$base does not serve $want. Did tools/deploy.sh install the tamirdesk nginx site?"; exit 1; }
           type(){ curl -fsSI --max-time 20 "$base$1" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2}'; }
           # Each file and the types browsers accept for it (a regex): scripts may come as
           # either JavaScript type, modules included.
@@ -102,7 +102,7 @@ jobs:
       - name: How the page is cached
         if: always()
         run: |
-          base=https://pythonpath.ir/clinic/
+          base=https://tamirdesk.ir/
           for u in "$base" "${base}index.html" "${base}?r=$RANDOM$RANDOM" "${base}app.js"; do
             echo "== $u"
             curl -sS -D - -o page.out --max-time 20 "$u" | tr -d '\r' \
